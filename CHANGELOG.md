@@ -3,6 +3,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [VISUALXP_patch_v.0.2.2] - 2026-10-21
+### Changed
+- Updated to ErsatzTV v26.11.3 (plus 6 later commits) as the base
+### Fixed
+- Opacity expressions (including `has_tag`) no longer use more memory on every frame, which slowed down long items
+- `text_file` keeps the previous text if the new image cannot be built, and an empty file hides the text
+- The weekday fast-forward on reset no longer skips the first instruction in a playout without a weekday `wait_until`
+
 ## [VISUALXP_patch] - 2026-07-18
 ### Adaugari
 - Emisie in 50p prin Normalize Framerate Fortat
