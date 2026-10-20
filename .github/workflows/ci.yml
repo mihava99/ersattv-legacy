@@ -3,8 +3,10 @@ on:
   push:
     branches:
       - main
+      - visualxp-patch
     paths-ignore:
       - CHANGELOG.md
+  workflow_dispatch:
   # pr.yml doesn't package
   pull_request:
     paths:
