@@ -1,6 +1,6 @@
 <Project>
     <PropertyGroup>
-        <InformationalVersion>develop</InformationalVersion>
+        <InformationalVersion>VISUALXP_patch_v.0.2.1</InformationalVersion>
         <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
         <AllowMissingPrunePackageData>true</AllowMissingPrunePackageData>
     </PropertyGroup>

@@ -83,17 +83,44 @@ public static class OpacityExpressionHelper
         return LinearFadePoints(time, start, peakStart, peakEnd, end);
     }
 
+    /// <summary>
+    /// element_seconds: time since this element was last activated (graphics_on).
+    /// Resets to 0 every time the element is turned on, independently of content
+    /// or channel time. Use in opacity_expression for per-activation fade-ins:
+    ///   LinearFadePoints(element_seconds, 0, 2, 999999, 1000000)
+    /// </summary>
     public static float GetOpacity(
         Expression expression,
         TimeSpan timeOfDay,
         TimeSpan contentTime,
         TimeSpan contentTotalTime,
-        TimeSpan channelTime)
+        TimeSpan channelTime,
+        double elementSeconds = 0,
+        double blockRemainingSeconds = 0,
+        IReadOnlyList<string> tags = null)
     {
         expression.Parameters["content_seconds"] = contentTime.TotalSeconds;
         expression.Parameters["content_total_seconds"] = contentTotalTime.TotalSeconds;
         expression.Parameters["channel_seconds"] = channelTime.TotalSeconds;
         expression.Parameters["time_of_day_seconds"] = timeOfDay.TotalSeconds;
+        expression.Parameters["element_seconds"] = elementSeconds;
+        expression.Parameters["block_remaining_seconds"] = blockRemainingSeconds;
+
+        // has_tag("TAG_NAME") — returns 1 if current media item has the tag, 0 if not.
+        // Useful in opacity_expression to show/hide elements based on content metadata:
+        //   opacity_expression: "has_tag(\"PARENTALGUIDANCE_on\")"
+        // The tag list is injected from MediaItem_Tags template variable at runtime.
+        var tagList = tags ?? [];
+        expression.EvaluateFunction -= OnEvaluateHasTag; // prevent double-registration
+        expression.EvaluateFunction += OnEvaluateHasTag;
+
+        void OnEvaluateHasTag(string name, FunctionEventArgs args)
+        {
+            if (name != "has_tag") return;
+            if (args.Parameters.Count != 1) { args.Result = 0; return; }
+            string tagName = args.Parameters.Evaluate(0)?.ToString() ?? string.Empty;
+            args.Result = tagList.Any(t => string.Equals(t, tagName, StringComparison.OrdinalIgnoreCase)) ? 1 : 0;
+        }
 
         object expressionResult = expression.Evaluate();
         return Convert.ToSingle(expressionResult, CultureInfo.InvariantCulture);

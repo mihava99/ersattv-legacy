@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Buffers;
 using System.IO.Pipelines;
 using CliWrap;
@@ -8,6 +9,7 @@ using ErsatzTV.Core.Interfaces.Metadata;
 using ErsatzTV.Core.Interfaces.Streaming;
 using ErsatzTV.FFmpeg;
 using Microsoft.Extensions.Logging;
+using NCalc;
 using SkiaSharp;
 
 namespace ErsatzTV.Infrastructure.Streaming.Graphics;
@@ -31,6 +33,33 @@ public class MotionElement(
     private TimeSpan _startTime;
     private TimeSpan _endTime;
     private MotionElementState _state;
+
+    // element_seconds, tags, block_remaining support
+
+    private static float ComputeFadeOpacity(
+        double elementSeconds,
+        double contentRemainingSeconds,
+        double fadeInSeconds,
+        double fadeOutSeconds,
+        float baseOpacity)
+    {
+        float opacity = baseOpacity;
+        if (fadeInSeconds > 0 && elementSeconds < fadeInSeconds)
+            opacity = baseOpacity * (float)(elementSeconds / fadeInSeconds);
+        if (fadeOutSeconds > 0 && contentRemainingSeconds < fadeOutSeconds)
+        {
+            float fadeOutFactor = (float)(contentRemainingSeconds / fadeOutSeconds);
+            opacity = Math.Min(opacity, baseOpacity * fadeOutFactor);
+        }
+        return Math.Clamp(opacity, 0f, 1f);
+    }
+    private static readonly Dictionary<string, DateTimeOffset> PersistentActivations = new();
+    private static readonly object PersistentLock = new();
+    private DateTimeOffset _activatedAt;
+    private float _baseOpacity = 1.0f;
+    private Option<Expression> _maybeOpacityExpression;
+    private IReadOnlyList<string> _tags = [];
+    private double _blockRemainingSeconds;
 
     public override int ZIndex { get; } = motionElement.ZIndex ?? 0;
 
@@ -63,6 +92,14 @@ public class MotionElement(
     {
         try
         {
+            // Set up opacity expression if provided
+            if (!string.IsNullOrWhiteSpace(motionElement.OpacityExpression))
+            {
+                var expression = new Expression(motionElement.OpacityExpression);
+                expression.EvaluateFunction += OpacityExpressionHelper.EvaluateFunction;
+                _maybeOpacityExpression = expression;
+            }
+
             _startTime = TimeSpan.FromSeconds(motionElement.StartSeconds ?? 0);
             var holdDuration = TimeSpan.FromSeconds(motionElement.HoldSeconds ?? 0);
             ProbeResult probeResult = await ProbeMotionElement(context.FrameSize);
@@ -70,6 +107,8 @@ public class MotionElement(
             {
                 MotionEndBehavior.Loop => context.Seek + context.Duration - _startTime,
                 MotionEndBehavior.Hold => probeResult.Duration + holdDuration,
+                // HoldIndefinitely: run the video once, then hold last frame until disposed
+                MotionEndBehavior.HoldIndefinitely => probeResult.Duration,
                 _ => probeResult.Duration
             };
 
@@ -122,15 +161,8 @@ public class MotionElement(
             }
 
             // ensure even dimensions
-            if (scaledWidth % 2 != 0)
-            {
-                scaledWidth++;
-            }
-
-            if (scaledHeight % 2 != 0)
-            {
-                scaledHeight++;
-            }
+            if (scaledWidth % 2 != 0) scaledWidth++;
+            if (scaledHeight % 2 != 0) scaledHeight++;
 
             var targetSize = new Resolution { Width = scaledWidth, Height = scaledHeight };
 
@@ -175,10 +207,7 @@ public class MotionElement(
                 arguments.AddRange(["-ss", FFmpegFormatter.Milliseconds(overlaySeekTime)]);
             }
 
-            arguments.AddRange(
-            [
-                "-i", motionElement.VideoPath,
-            ]);
+            arguments.AddRange(["-i", motionElement.VideoPath]);
 
             // output seeking preserves the complete source on subsequent loop iterations.
             if (overlaySeekTime > TimeSpan.Zero && motionElement.EndBehavior is MotionEndBehavior.Loop)
@@ -225,6 +254,30 @@ public class MotionElement(
             _commandTask = command.ExecuteAsync(linkedToken.Token);
 
             _ = _commandTask.Task.ContinueWith(_ => pipe.Writer.Complete(), TaskScheduler.Default);
+
+            // Record activation time — persistent: true keeps it across playout items
+            if (motionElement.Persistent)
+            {
+                string key = motionElement.SourceFileName ?? motionElement.DebugName();
+                lock (PersistentLock)
+                {
+                    if (!PersistentActivations.TryGetValue(key, out _activatedAt))
+                    {
+                        _activatedAt = DateTimeOffset.UtcNow;
+                        PersistentActivations[key] = _activatedAt;
+                    }
+                }
+            }
+            else
+            {
+                _activatedAt = DateTimeOffset.UtcNow;
+            }
+            _blockRemainingSeconds = context.BlockRemainingTime.TotalSeconds;
+            if (context.TemplateVariables.TryGetValue("MediaItem_Tags", out object tagsObj) &&
+                tagsObj is IEnumerable<string> tagList)
+            {
+                _tags = tagList.ToList();
+            }
         }
         catch (Exception ex)
         {
@@ -247,7 +300,23 @@ public class MotionElement(
                 return Option<PreparedElementImage>.None;
             }
 
-            if (contentTime >= _endTime)
+            // ── HoldIndefinitely: hold last frame until disposed (graphics_off) ──────
+            // Unlike Hold (which has a fixed _endTime), HoldIndefinitely never sets
+            // IsFinished — the element stays alive until the graphics engine disposes
+            // it when graphics_off fires in the sequential schedule.
+            // An optional opacity_expression (using element_seconds) can be used to
+            // fade in and/or fade out without knowing the hold duration in advance.
+            if (motionElement.EndBehavior is MotionEndBehavior.HoldIndefinitely)
+            {
+                if (_state is MotionElementState.Holding)
+                {
+                    float holdOpacity = GetCurrentOpacity(timeOfDay, contentTime, contentTotalTime, channelTime);
+                    return holdOpacity == 0
+                        ? Option<PreparedElementImage>.None
+                        : new PreparedElementImage(_motionFrameBitmap, _point, holdOpacity, ZIndex, false);
+                }
+            }
+            else if (contentTime >= _endTime)
             {
                 IsFinished = true;
                 _state = MotionElementState.Finished;
@@ -277,7 +346,6 @@ public class MotionElement(
                             sequence.CopyTo(pixmap.GetPixelSpan());
                         }
 
-                        // mark this frame as consumed
                         consumed = sequence.End;
                         examined = consumed;
                         _hasFrame = true;
@@ -288,8 +356,10 @@ public class MotionElement(
                             continue;
                         }
 
-                        // we are done, return the frame
-                        return new PreparedElementImage(_motionFrameBitmap, _point, 1.0f, ZIndex, false);
+                        float opacity = GetCurrentOpacity(timeOfDay, contentTime, contentTotalTime, channelTime);
+                        return opacity == 0
+                            ? Option<PreparedElementImage>.None
+                            : new PreparedElementImage(_motionFrameBitmap, _point, opacity, ZIndex, false);
                     }
 
                     if (readResult.IsCompleted)
@@ -300,6 +370,14 @@ public class MotionElement(
                         {
                             _state = MotionElementState.Holding;
                             return new PreparedElementImage(_motionFrameBitmap, _point, 1.0f, ZIndex, false);
+                        }
+                        else if (motionElement.EndBehavior is MotionEndBehavior.HoldIndefinitely && _hasFrame)
+                        {
+                            _state = MotionElementState.Holding;
+                            float opacity = GetCurrentOpacity(timeOfDay, contentTime, contentTotalTime, channelTime);
+                            return opacity == 0
+                                ? Option<PreparedElementImage>.None
+                                : new PreparedElementImage(_motionFrameBitmap, _point, opacity, ZIndex, false);
                         }
                         else
                         {
@@ -324,6 +402,51 @@ public class MotionElement(
         {
             return Option<PreparedElementImage>.None;
         }
+    }
+
+    /// <summary>
+    /// Returns the current opacity from the opacity_expression (if set) using
+    /// element_seconds, or 1.0f if no expression is configured.
+    /// </summary>
+    private float GetCurrentOpacity(
+        TimeSpan timeOfDay,
+        TimeSpan contentTime,
+        TimeSpan contentTotalTime,
+        TimeSpan channelTime)
+    {
+        // Check if graphics_off triggered a fade-out
+        float? fadeOutOpacity = GetFadeOutOpacity(motionElement.FadeOutSeconds, _baseOpacity);
+        if (fadeOutOpacity.HasValue)
+        {
+            if (IsFinished) return 0f;
+            return fadeOutOpacity.Value;
+        }
+
+        double elemSecs = (DateTimeOffset.UtcNow - _activatedAt).TotalSeconds;
+        double contentRemaining = (contentTotalTime - contentTime).TotalSeconds;
+
+        if (_maybeOpacityExpression.IsSome)
+        {
+            foreach (Expression expression in _maybeOpacityExpression)
+            {
+                return OpacityExpressionHelper.GetOpacity(
+                    expression,
+                    timeOfDay,
+                    contentTime,
+                    contentTotalTime,
+                    channelTime,
+                    elemSecs,
+                    _blockRemainingSeconds,
+                    _tags);
+            }
+        }
+
+        return ComputeFadeOpacity(
+            elemSecs,
+            contentRemaining,
+            motionElement.FadeInSeconds,
+            motionElement.FadeOutSeconds,
+            _baseOpacity);
     }
 
     private async Task<ProbeResult> ProbeMotionElement(Resolution frameSize)

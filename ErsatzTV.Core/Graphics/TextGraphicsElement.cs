@@ -43,6 +43,26 @@ public class TextGraphicsElement : BaseGraphicsElement
     public int EpgEntries { get; set; }
 
     public string Text { get; set; }
+
+    /// <summary>
+    /// When true, element_seconds is NOT reset on new playout items.
+    /// </summary>
+    [YamlMember(Alias = "persistent", ApplyNamingConventions = false)]
+    public bool Persistent { get; set; }
+
+    [YamlMember(Alias = "fade_in_seconds", ApplyNamingConventions = false)]
+    public double FadeInSeconds { get; set; }
+
+    [YamlMember(Alias = "fade_out_seconds", ApplyNamingConventions = false)]
+    public double FadeOutSeconds { get; set; }
+
+    /// <summary>
+    /// Path to a plain text file. When set, the file is read and reloaded
+    /// at render time whenever its mtime changes, giving live updates.
+    /// Injected manually via regex in GraphicsElementLoader since
+    /// CamelCaseNamingConvention cannot map text_file automatically.
+    /// </summary>
+    public string TextFile { get; set; }
 }
 
 public enum TextFit

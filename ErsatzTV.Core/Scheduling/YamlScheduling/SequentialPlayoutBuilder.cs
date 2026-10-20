@@ -278,9 +278,37 @@ public class SequentialPlayoutBuilder(
 
         context.RestoreSequenceOrders();
 
+        // ── Day-of-week fast-forward on reset ────────────────────────────────────
+        // When a fresh reset occurs and the playout contains day-name wait_until
+        // instructions (e.g. "Monday 00:00"), start from the last wait_until whose
+        // target day is <= today rather than always from instruction 0 (which would
+        // jump to next Monday on any non-Monday restart).
+        if (mode is PlayoutBuildMode.Reset)
+        {
+            FastForwardToCurrentDay(context, start, logger);
+        }
+
         // handle all playout instructions
         while (context.CurrentTime < finish)
         {
+            // Re-seek if we just switched back from an alternate schedule
+            if (context.NeedsReseekAfterScheduleSwitch)
+            {
+                context.NeedsReseekAfterScheduleSwitch = false;
+                // Save current index — FastForwardToCurrentDay should only move us
+                // FORWARD, never backward. If we're already past the correct position
+                // (e.g. switch happened mid-content), don't rewind.
+                int indexBeforeReseek = context.InstructionIndex;
+                FastForwardToCurrentDay(context, context.CurrentTime, logger);
+                if (context.InstructionIndex < indexBeforeReseek)
+                {
+                    // FastForwardToCurrentDay moved us backward — revert to avoid
+                    // re-executing instructions that already ran (duplicate bumper)
+                    context.InstructionIndex = indexBeforeReseek;
+                }
+                logger.LogDebug("Re-seeked after alternate schedule switch at {Time} idx={Idx}", context.CurrentTime, context.InstructionIndex);
+            }
+
             // select the active schedule (if any) for the current time; a null name means the default playout
             string activeScheduleName = null;
             foreach (YamlPlayoutScheduleItem activeSchedule in
@@ -297,6 +325,15 @@ public class SequentialPlayoutBuilder(
                     context.CurrentTime);
 
                 context.SwitchToSchedule(activeScheduleName);
+
+                if (activeScheduleName != null)
+                {
+                    // Switching TO alternate: seek to correct mid-day position
+                    SeekToCurrentTime(context, context.CurrentTime, logger);
+                }
+                // Switching BACK to default is handled by NeedsReseekAfterScheduleSwitch
+                // on the next iteration via FastForwardToCurrentDay — don't call
+                // SeekToCurrentTime here as it positions incorrectly for midnight entry.
 
                 // split the EPG guide group at the schedule boundary
                 context.AdvanceGuideGroup();
@@ -646,6 +683,318 @@ public class SequentialPlayoutBuilder(
         {
             logger.LogWarning(ex, "Error loading YAML playout definition");
             return Option<YamlPlayoutDefinition>.None;
+        }
+    }
+
+
+    // ── Fast-forward to the correct weekday block on reset ───────────────────────
+    // Scans the flattened playout for day-name wait_until instructions and advances
+    // InstructionIndex to the LAST one whose target day has already passed relative
+    // to `start`, so the build loop begins at the correct weekday block immediately.
+    private static void FastForwardToCurrentDay(YamlPlayoutContext context, DateTimeOffset start, ILogger<SequentialPlayoutBuilder> logger)
+    {
+        List<YamlPlayoutInstruction> instructions = context.CurrentInstructions;
+        DateTime localNow = start.ToLocalTime().DateTime;
+        DayOfWeek today = localNow.DayOfWeek;
+        TimeOnly nowTime = TimeOnly.FromDateTime(localNow);
+
+        // Strategy: find the FIRST day anchor in the playout that targets the
+        // soonest upcoming day from today. This is the correct starting instruction
+        // because the WaitUntilHandler will advance currentTime to that day.
+        //
+        // Example: today=Thursday, playout has Mon/Tue/Wed/Thu/Fri/Sat anchors.
+        // Thu's anchor time (00:00) has passed → today counts as "soonest past/present".
+        // We find Thursday's first anchor instruction and start there.
+        // WaitUntilHandler sees Thursday 00:00 already passed → daysUntil=7 (next Thu)
+        // BUT since we want to start from the CURRENT week's Friday, we need to find
+        // the anchor that is either TODAY (time passed) or the NEXT FUTURE day.
+        //
+        // Correct logic:
+        // 1. Find all day-name wait_until anchors and their "days until" from today
+        // 2. Pick the one with the SMALLEST daysUntil > 0 (next future day)
+        //    OR daysUntil == 0 with time already passed (today, time passed = next week same day)
+        // 3. BUT if today's anchor exists and time hasn't passed yet, start there (daysUntil=0)
+        //
+        // Actually the simplest correct approach:
+        // - If today has an anchor and nowTime >= anchorTime → start from today's anchor
+        //   (WaitUntilHandler will treat it as 0 days until, i.e. today — but since time
+        //   already passed it will jump to next week. That's wrong too.)
+        //
+        // THE REAL CORRECT APPROACH:
+        // Don't use FastForwardToCurrentDay at all for future days.
+        // Only fast-forward when the current day IS in the playout and its time has passed.
+        // For all other cases, let the WaitUntilHandler naturally find the next occurrence.
+        // The ONLY case we need to handle: today's anchor time has already passed,
+        // and we want to start from today's content (not next week's same day).
+        // For that we set InstructionIndex to today's anchor and let currentTime = start (now).
+
+        int bestIndex = 0;
+        int bestDaysUntil = int.MaxValue;
+        var foundDayAnchor = false;
+
+        for (int i = 0; i < instructions.Count; i++)
+        {
+            if (instructions[i] is not YamlPlayoutWaitUntilInstruction waitUntil)
+                continue;
+
+            if (!YamlPlayoutWaitUntilHandler.TryParseDayTime(
+                    waitUntil.WaitUntil,
+                    out DayOfWeek targetDay,
+                    out TimeOnly targetTime))
+                continue;
+
+            int daysUntil = ((int)targetDay - (int)today + 7) % 7;
+
+            if (daysUntil == 0)
+            {
+                // Today's anchor — always start here regardless of time
+                // WaitUntilHandler handles whether to play now or wait
+                bestIndex = i;
+                foundDayAnchor = true;
+                break; // today is the best possible match, stop scanning
+            }
+
+            if (daysUntil < bestDaysUntil)
+            {
+                // Closer future day than what we've seen — use first occurrence of it
+                bestDaysUntil = daysUntil;
+                bestIndex = i;
+                foundDayAnchor = true;
+                // Keep scanning — a different day may be even closer
+                // But if we see this same daysUntil again, we keep the first occurrence
+            }
+        }
+
+        logger.LogDebug("FastForwardToCurrentDay: today={Today} nowTime={Now} bestIndex={Best} currentTime={CT} start={Start}",
+            today, nowTime, bestIndex, context.CurrentTime, start);
+
+        // Run anchor scan for ANY bestIndex including 0 (Monday is instruction 0)
+        if (bestIndex >= 0 && instructions.Count > bestIndex)
+        {
+            // Scan forward from today's day anchor, simulating only time-based
+            // instructions to find the last plain-time anchor before 'start'.
+            // This gives us the exact block we should be in right now.
+            var todayMidnight = new DateTimeOffset(
+                DateOnly.FromDateTime(start.ToLocalTime().DateTime),
+                new TimeOnly(0, 0), start.Offset);
+
+            DateTimeOffset simTime = todayMidnight;
+            // With a day anchor, skip the anchor itself (its time is set below). Without one,
+            // instruction 0 is a normal instruction and must not be skipped.
+            int scanStart = foundDayAnchor ? bestIndex + 1 : 0;
+            int lastPlainAnchorIndex = scanStart;
+            DateTimeOffset lastPlainAnchorTime = todayMidnight;
+
+            var seekInstrs = context.CurrentInstructions;
+            for (int j = scanStart; j < seekInstrs.Count; j++)
+            {
+                var instr = seekInstrs[j];
+                DateTimeOffset? nextTime = null;
+
+                if (instr is YamlPlayoutWaitUntilInstruction wu2)
+                {
+                    if (TimeOnly.TryParse(wu2.WaitUntil, out TimeOnly wt))
+                    {
+                        var simLocal = simTime.LocalDateTime;
+                        var simTod = TimeOnly.FromDateTime(simLocal);
+                        if (wt >= simTod)
+                        {
+                            nextTime = new DateTimeOffset(
+                                DateOnly.FromDateTime(simLocal), wt, start.Offset);
+                        }
+                        else if (wu2.Tomorrow)
+                        {
+                            nextTime = new DateTimeOffset(
+                                DateOnly.FromDateTime(simLocal).AddDays(1), wt, start.Offset);
+                        }
+                    }
+                    else if (YamlPlayoutWaitUntilHandler.TryParseDayTime(wu2.WaitUntil, out _, out _))
+                    {
+                        // Hit another day-name anchor — stop scanning (end of today)
+                        break;
+                    }
+                }
+                else if (instr is YamlPlayoutPadUntilInstruction pu2)
+                {
+                    if (TimeOnly.TryParse(pu2.PadUntil, out TimeOnly pt))
+                    {
+                        var simLocal = simTime.LocalDateTime;
+                        var simTod = TimeOnly.FromDateTime(simLocal);
+                        if (pt > simTod)
+                        {
+                            nextTime = new DateTimeOffset(
+                                DateOnly.FromDateTime(simLocal), pt, start.Offset);
+                        }
+                        else
+                        {
+                            // pad_until already past for today — treat as next day
+                            nextTime = new DateTimeOffset(
+                                DateOnly.FromDateTime(simLocal).AddDays(1), pt, start.Offset);
+                        }
+                    }
+                }
+                else if (instr is YamlPlayoutRepeatInstruction)
+                {
+                    break;
+                }
+
+                if (nextTime.HasValue)
+                {
+                    simTime = nextTime.Value;
+                    if (simTime <= start)
+                    {
+                        lastPlainAnchorIndex = j + 1;
+                        lastPlainAnchorTime = simTime;
+                    }
+                    else
+                    {
+                        break; // this anchor is in the future — we're in the right block
+                    }
+                }
+            }
+
+            context.InstructionIndex = lastPlainAnchorIndex;
+            context.CurrentTime = lastPlainAnchorTime > todayMidnight
+                ? lastPlainAnchorTime
+                : start;
+
+            logger.LogDebug(
+                "FastForwardToCurrentDay: idx={Idx} time={T} start={S}",
+                lastPlainAnchorIndex, context.CurrentTime, start);
+        }
+    }
+
+    
+    /// <summary>
+    /// Seeks the instruction index and current time to the correct position in the
+    /// current schedule's playout based on the real current time (now).
+    /// Works for both day-name anchors (weekly schedules) and plain time anchors
+    /// (alternate schedules with wait_until: "00:00" etc.).
+    ///
+    /// Algorithm:
+    /// 1. Simulate running the playout from the start, advancing ONLY via
+    ///    wait_until and pad_until time anchors (no content items).
+    /// 2. Find the LAST time anchor whose computed time is <= now.
+    /// 3. Start building from that anchor's next instruction, with currentTime
+    ///    set to that anchor's time.
+    /// This ensures pad_until/wait_until block boundaries fire at the correct
+    /// absolute times, keeping the schedule aligned regardless of when it started.
+    /// </summary>
+    private static void SeekToCurrentTime(
+        YamlPlayoutContext context,
+        DateTimeOffset now,
+        ILogger<SequentialPlayoutBuilder> logger)
+    {
+        List<YamlPlayoutInstruction> instructions = context.CurrentInstructions;
+        if (instructions == null || instructions.Count == 0) return;
+
+        // Start simulation from the beginning of today (or from instruction 0)
+        var localNow = now.LocalDateTime;
+        var todayMidnight = new DateTimeOffset(
+            DateOnly.FromDateTime(localNow), new TimeOnly(0, 0), now.Offset);
+
+        DateTimeOffset simTime = todayMidnight;
+        int bestIndex = 0;
+        DateTimeOffset bestTime = todayMidnight;
+
+        for (int i = 0; i < instructions.Count; i++)
+        {
+            var instr = instructions[i];
+            DateTimeOffset? nextTime = null;
+
+            if (instr is YamlPlayoutWaitUntilInstruction wu)
+            {
+                if (TimeOnly.TryParse(wu.WaitUntil, out TimeOnly t))
+                {
+                    // Plain time anchor
+                    var simLocal = simTime.LocalDateTime;
+                    var simTod = TimeOnly.FromDateTime(simLocal);
+                    if (t >= simTod)
+                    {
+                        nextTime = new DateTimeOffset(
+                            DateOnly.FromDateTime(simLocal), t, now.Offset);
+                    }
+                    else if (wu.Tomorrow)
+                    {
+                        nextTime = new DateTimeOffset(
+                            DateOnly.FromDateTime(simLocal).AddDays(1), t, now.Offset);
+                    }
+                    else
+                    {
+                        // Time already passed, tomorrow:false — skip (same as handler)
+                        nextTime = simTime; // no advance
+                    }
+                }
+                else if (YamlPlayoutWaitUntilHandler.TryParseDayTime(
+                    wu.WaitUntil, out DayOfWeek targetDay, out TimeOnly dayTime))
+                {
+                    // Day-name anchor
+                    var simLocal = simTime.LocalDateTime;
+                    int daysUntil = ((int)targetDay - (int)simLocal.DayOfWeek + 7) % 7;
+                    if (daysUntil == 0)
+                    {
+                        var simTod = TimeOnly.FromDateTime(simLocal);
+                        if (simTod > dayTime &&
+                            !(simTod.Hour == 0 && simTod.Minute < 30))
+                        {
+                            daysUntil = 7;
+                        }
+                    }
+                    nextTime = new DateTimeOffset(
+                        DateOnly.FromDateTime(simLocal).AddDays(daysUntil),
+                        dayTime, now.Offset);
+                }
+            }
+            else if (instr is YamlPlayoutPadUntilInstruction pu)
+            {
+                if (TimeOnly.TryParse(pu.PadUntil, out TimeOnly padTime))
+                {
+                    var simLocal = simTime.LocalDateTime;
+                    var simTod = TimeOnly.FromDateTime(simLocal);
+                    if (padTime > simTod)
+                    {
+                        nextTime = new DateTimeOffset(
+                            DateOnly.FromDateTime(simLocal), padTime, now.Offset);
+                    }
+                    else
+                    {
+                        // Already past — next day
+                        nextTime = new DateTimeOffset(
+                            DateOnly.FromDateTime(simLocal).AddDays(1), padTime, now.Offset);
+                    }
+                }
+            }
+            else if (instr is YamlPlayoutRepeatInstruction)
+            {
+                // Stop at repeat — don't simulate past it
+                break;
+            }
+
+            if (nextTime.HasValue && nextTime.Value != simTime)
+            {
+                simTime = nextTime.Value;
+
+                if (simTime <= now)
+                {
+                    // This anchor is in the past — record as best candidate
+                    bestIndex = i + 1; // start AFTER this anchor
+                    bestTime = simTime;
+                }
+                else
+                {
+                    // This anchor is in the future — we're in the block spanning now
+                    break;
+                }
+            }
+        }
+
+        if (bestIndex > 0 || bestTime > todayMidnight)
+        {
+            context.InstructionIndex = bestIndex;
+            context.CurrentTime = bestTime;
+            logger.LogDebug(
+                "SeekToCurrentTime: instruction={Idx} time={T} (now={Now})",
+                bestIndex, bestTime, now);
         }
     }
 

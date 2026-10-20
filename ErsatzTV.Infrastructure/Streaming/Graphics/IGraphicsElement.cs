@@ -18,4 +18,11 @@ public interface IGraphicsElement
         TimeSpan contentTotalTime,
         TimeSpan channelTime,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Called when graphics_off fires. The element will fade out over
+    /// its configured fade_out_seconds then mark itself IsFinished.
+    /// If fade_out_seconds is 0, marks IsFinished immediately.
+    /// </summary>
+    void BeginFadeOut();
 }

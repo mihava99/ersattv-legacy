@@ -45,12 +45,12 @@ public class ScaleFilter : BaseFilter
             if (_isAnamorphicEdgeCase)
             {
                 scale =
-                    $"scale=iw:sar*ih,setsar=1,scale={_paddedSize.Width}:{_paddedSize.Height}:flags=fast_bilinear{aspectRatio}";
+                    $"scale=iw:sar*ih,setsar=1,scale={_paddedSize.Width}:{_paddedSize.Height}:flags=fast_bilinear{aspectRatio},setsar=1";
             }
             else if (_currentState.IsAnamorphic)
             {
                 scale =
-                    $"scale=iw*sar:ih,setsar=1,scale={_paddedSize.Width}:{_paddedSize.Height}:flags=fast_bilinear{aspectRatio}";
+                    $"scale=iw*sar:ih,setsar=1,scale={_paddedSize.Width}:{_paddedSize.Height}:flags=fast_bilinear{aspectRatio},setsar=1";
             }
             else
             {

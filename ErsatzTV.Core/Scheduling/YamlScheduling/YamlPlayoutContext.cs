@@ -18,6 +18,7 @@ public class YamlPlayoutContext(Playout playout, YamlPlayoutDefinition definitio
     private readonly System.Collections.Generic.HashSet<int> _channelWatermarkIds = [];
     private readonly Stack<FillerKind> _fillerKind = new();
     private readonly Dictionary<int, string> _graphicsElements = [];
+    private readonly Dictionary<int, (string Variables, double FadeOutSeconds)> _fadingOutElements = [];
 
     private System.Collections.Generic.HashSet<int> _visitedInstructions = [];
     private int _guideGroup = guideGroup;
@@ -271,6 +272,13 @@ public class YamlPlayoutContext(Playout playout, YamlPlayoutDefinition definitio
             .ToList();
 
     // switch to the playout list for the given schedule (null => default playout)
+    /// <summary>
+    /// Set when switching back to the default schedule after an alternate schedule ends.
+    /// SequentialPlayoutBuilder checks this and calls FastForwardToCurrentDay to
+    /// resume at the correct weekday anchor rather than rewinding to Monday.
+    /// </summary>
+    public bool NeedsReseekAfterScheduleSwitch { get; set; }
+
     public void SwitchToSchedule(string scheduleName)
     {
         // snapshot the state (position + ambient modifiers) of the list we're leaving
@@ -282,6 +290,12 @@ public class YamlPlayoutContext(Playout playout, YamlPlayoutDefinition definitio
         if (scheduleName is null)
         {
             _currentInstructions = null;
+            // Only set re-seek flag when actually switching FROM an alternate schedule
+            // back to default — not on every tick when already on default.
+            if (currentKey != string.Empty)
+            {
+                NeedsReseekAfterScheduleSwitch = true;
+            }
         }
         else
         {
@@ -401,6 +415,19 @@ public class YamlPlayoutContext(Playout playout, YamlPlayoutDefinition definitio
     public List<int> GetChannelWatermarkIds() => _channelWatermarkIds.ToList();
 
     public void SetGraphicsElement(int id, string variablesJson) => _graphicsElements[id] = variablesJson;
+
+    public void BeginFadeOutGraphicsElement(int id, double fadeOutSeconds)
+    {
+        _graphicsElements.TryGetValue(id, out string variables);
+        _graphicsElements.Remove(id);
+        if (fadeOutSeconds > 0)
+            _fadingOutElements[id] = (variables, fadeOutSeconds);
+    }
+
+    public IReadOnlyDictionary<int, (string Variables, double FadeOutSeconds)> GetFadingOutElements()
+        => _fadingOutElements;
+
+    public void ClearFadingOutElement(int id) => _fadingOutElements.Remove(id);
     public void RemoveGraphicsElement(int id) => _graphicsElements.Remove(id);
     public void ClearGraphicsElements() => _graphicsElements.Clear();
     public IReadOnlyDictionary<int, string> GetGraphicsElements() => _graphicsElements;

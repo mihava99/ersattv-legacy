@@ -21,6 +21,12 @@ public partial class TextElement(
     private Option<Expression> _maybeOpacityExpression;
     private float _opacity;
 
+    // text_file live reload state
+    private string _lastFileContent;
+    private DateTime _lastFileCheck = DateTime.MinValue;
+    private static readonly TimeSpan FileCheckInterval = TimeSpan.FromSeconds(1);
+    private GraphicsEngineContext _context;
+
     public override int ZIndex { get; } = textElement.ZIndex ?? 0;
 
     public override string DebugKey { get; } = $"Text {textElement.DebugName()}";
@@ -108,6 +114,7 @@ public partial class TextElement(
             logger.LogWarning(ex, "Failed to initialize text element; will disable for this content");
         }
 
+        _context = context;
         return Task.CompletedTask;
     }
 
@@ -118,6 +125,33 @@ public partial class TextElement(
         TimeSpan channelTime,
         CancellationToken cancellationToken)
     {
+        // Live reload text_file every second during long items (e.g. concerts)
+        if (!string.IsNullOrWhiteSpace(textElement.TextFile))
+        {
+            var now = DateTime.UtcNow;
+            if (now - _lastFileCheck >= FileCheckInterval)
+            {
+                _lastFileCheck = now;
+                try
+                {
+                    string fileContent = File.ReadAllText(textElement.TextFile).Trim();
+                    if (fileContent != _lastFileContent)
+                    {
+                        _lastFileContent = fileContent;
+                        string newText = string.IsNullOrWhiteSpace(textElement.Text)
+                            ? fileContent
+                            : textElement.Text.Replace(textElement.Text, fileContent);
+                        // Rebuild text element with new content
+                        RebuildImage(fileContent);
+                    }
+                }
+                catch
+                {
+                    // File read failed — keep showing last known content
+                }
+            }
+        }
+
         float opacity = _opacity;
         foreach (Expression expression in _maybeOpacityExpression)
         {
@@ -132,6 +166,42 @@ public partial class TextElement(
         return opacity == 0
             ? ValueTask.FromResult(Option<PreparedElementImage>.None)
             : new ValueTask<Option<PreparedElementImage>>(new PreparedElementImage(_image, _location, opacity, ZIndex, false));
+    }
+
+    private void RebuildImage(string newText)
+    {
+        try
+        {
+            _image?.Dispose();
+            RichTextKit.TextBlock textBlock = BuildTextBlock(newText);
+            _image = new SKBitmap(
+                (int)Math.Ceiling(textBlock.MeasuredWidth),
+                (int)Math.Ceiling(textBlock.MeasuredHeight));
+            using var canvas = new SKCanvas(_image);
+            canvas.Clear(SKColors.Transparent);
+            textBlock.Paint(canvas, new SKPoint(0, 0));
+
+            // Recalculate position since text width may have changed
+            if (_context != null)
+            {
+                var horizontalMargin =
+                    (int)Math.Round((textElement.HorizontalMarginPercent ?? 0) / 100.0 * _context.FrameSize.Width);
+                var verticalMargin =
+                    (int)Math.Round((textElement.VerticalMarginPercent ?? 0) / 100.0 * _context.FrameSize.Height);
+                _location = CalculatePosition(
+                    textElement.Location,
+                    _context.FrameSize.Width,
+                    _context.FrameSize.Height,
+                    _image.Width,
+                    _image.Height,
+                    horizontalMargin,
+                    verticalMargin);
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to rebuild text image from file");
+        }
     }
 
     private RichTextKit.TextBlock BuildTextBlock(string textToRender)

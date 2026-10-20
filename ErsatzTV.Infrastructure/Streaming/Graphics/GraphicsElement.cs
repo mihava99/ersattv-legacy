@@ -13,6 +13,37 @@ public abstract class GraphicsElement : IGraphicsElement
 
     public bool IsFinished { get; set; }
 
+    // Set by BeginFadeOut() — records when fade-out started
+    protected DateTimeOffset? FadeOutStartedAt { get; private set; }
+
+    /// <summary>
+    /// Called by GraphicsEngine when graphics_off fires.
+    /// Starts the fade-out timer. Element marks itself finished when done.
+    /// </summary>
+    public virtual void BeginFadeOut()
+    {
+        FadeOutStartedAt = DateTimeOffset.UtcNow;
+    }
+
+    /// <summary>
+    /// Computes opacity based on fade-out progress since BeginFadeOut() was called.
+    /// Returns null if no fade-out is in progress.
+    /// </summary>
+    protected float? GetFadeOutOpacity(double fadeOutSeconds, float baseOpacity)
+    {
+        if (FadeOutStartedAt is null || fadeOutSeconds <= 0)
+            return null;
+
+        double elapsed = (DateTimeOffset.UtcNow - FadeOutStartedAt.Value).TotalSeconds;
+        if (elapsed >= fadeOutSeconds)
+        {
+            IsFinished = true;
+            return 0f;
+        }
+
+        return baseOpacity * (float)(1.0 - elapsed / fadeOutSeconds);
+    }
+
     public abstract Task InitializeAsync(GraphicsEngineContext context, CancellationToken cancellationToken);
 
     public abstract ValueTask<Option<PreparedElementImage>> PrepareImage(

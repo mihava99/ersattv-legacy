@@ -98,11 +98,14 @@ public static class FFmpegPlaybackSettingsCalculator
                 if (NeedToScale(ffmpegProfile, videoVersion, sampleAspectRatio))
                 {
                     DisplaySize scaledSize = CalculateScaledSize(ffmpegProfile, videoVersion, sampleAspectRatio);
-                    if (!scaledSize.IsSameSizeAs(videoVersion))
+                    // Always ensure dimensions are divisible by 2 (libx264 requirement).
+                    // Even if scaledSize matches videoVersion, the source may have odd dimensions.
+                    int fixedHeight = scaledSize.Height % 2 == 0 ? scaledSize.Height : scaledSize.Height - 1;
+                    int fixedWidth  = scaledSize.Width  % 2 == 0 ? scaledSize.Width  : scaledSize.Width  - 1;
+                    DisplaySize evenSize = new DisplaySize(fixedWidth, fixedHeight);
+                    if (!evenSize.IsSameSizeAs(videoVersion) || scaledSize.Height % 2 != 0 || scaledSize.Width % 2 != 0)
                     {
-                        int fixedHeight = scaledSize.Height + scaledSize.Height % 2;
-                        int fixedWidth = scaledSize.Width + scaledSize.Width % 2;
-                        result.ScaledSize = Some((IDisplaySize)new DisplaySize(fixedWidth, fixedHeight));
+                        result.ScaledSize = Some((IDisplaySize)evenSize);
                     }
                 }
 
@@ -257,13 +260,16 @@ public static class FFmpegPlaybackSettingsCalculator
         {
             if (hw1 >= targetSize.Width && hh1 >= targetSize.Height)
             {
-                return new DisplaySize(hw1, hh1);
+                return new DisplaySize(hw1 % 2 == 0 ? hw1 : hw1 - 1, hh1 % 2 == 0 ? hh1 : hh1 - 1);
             }
 
-            return new DisplaySize(hw2, hh2);
+            return new DisplaySize(hw2 % 2 == 0 ? hw2 : hw2 - 1, hh2 % 2 == 0 ? hh2 : hh2 - 1);
         }
 
-        return hh1 <= targetSize.Height ? new DisplaySize(hw1, hh1) : new DisplaySize(hw2, hh2);
+        var result2 = hh1 <= targetSize.Height ? new DisplaySize(hw1, hh1) : new DisplaySize(hw2, hh2);
+        int ew = result2.Width  % 2 == 0 ? result2.Width  : result2.Width  - 1;
+        int eh = result2.Height % 2 == 0 ? result2.Height : result2.Height - 1;
+        return new DisplaySize(ew, eh);
     }
 
     private static int Gcd(int a, int b)

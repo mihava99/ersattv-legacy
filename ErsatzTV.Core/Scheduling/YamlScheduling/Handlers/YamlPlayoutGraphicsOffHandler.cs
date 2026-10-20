@@ -1,3 +1,4 @@
+using System.Text.Json;
 using ErsatzTV.Core.Domain;
 using ErsatzTV.Core.Interfaces.Repositories;
 using ErsatzTV.Core.Scheduling.YamlScheduling.Models;
@@ -32,6 +33,29 @@ public class YamlPlayoutGraphicsOffHandler(IGraphicsElementRepository graphicsEl
         {
             foreach (GraphicsElement ge in await GetGraphicsElementByPath(graphicsOff.GraphicsOff, cancellationToken))
             {
+                // If fade_out_seconds is set, inject it into the LAST added playout item's
+                // graphics element variables so the renderer fades out during that item.
+                // This works on ALL schedule types since it modifies already-built items.
+                if (graphicsOff.FadeOutSeconds > 0 && context.AddedItems.Count > 0)
+                {
+                    PlayoutItem lastItem = context.AddedItems[^1];
+                    PlayoutItemGraphicsElement pige = lastItem.PlayoutItemGraphicsElements
+                        .FirstOrDefault(x => x.GraphicsElementId == ge.Id);
+
+                    if (pige is not null)
+                    {
+                        Dictionary<string, string> vars = new();
+                        if (!string.IsNullOrWhiteSpace(pige.Variables))
+                        {
+                            try { vars = JsonSerializer.Deserialize<Dictionary<string, string>>(pige.Variables) ?? vars; }
+                            catch { }
+                        }
+                        vars["fade_out_seconds"] = graphicsOff.FadeOutSeconds.ToString(
+                            System.Globalization.CultureInfo.InvariantCulture);
+                        pige.Variables = JsonSerializer.Serialize(vars);
+                    }
+                }
+
                 context.RemoveGraphicsElement(ge.Id);
             }
         }

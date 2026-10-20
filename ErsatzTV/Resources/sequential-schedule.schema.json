@@ -465,7 +465,8 @@
         "properties": {
           "wait_until": { "type": "string" },
           "tomorrow": { "type": "boolean" },
-          "rewind_on_reset": { "type": "boolean" }
+          "rewind_on_reset": { "type": "boolean" },
+          "skip_if_passed": { "type": "boolean" }
         },
         "required": [ "wait_until" ],
         "additionalProperties": false

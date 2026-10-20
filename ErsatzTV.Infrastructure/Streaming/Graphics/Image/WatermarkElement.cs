@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using ErsatzTV.Core.Domain;
 using ErsatzTV.Core.FFmpeg;
 using ErsatzTV.Core.Interfaces.Streaming;
@@ -16,11 +17,13 @@ public class WatermarkElement : ImageElementBase
 
     private Option<Expression> _maybeOpacityExpression;
     private float _opacity;
+    private DateTimeOffset _activatedAt;
+    private IReadOnlyList<string> _tags = [];
+    private double _blockRemainingSeconds;
 
     public WatermarkElement(WatermarkOptions watermarkOptions, ILogger logger)
     {
         _logger = logger;
-        // TODO: better model coming in here?
 
         _imagePath = watermarkOptions.ImagePath;
         _watermark = watermarkOptions.Watermark;
@@ -80,6 +83,14 @@ public class WatermarkElement : ImageElementBase
                 _watermark.VerticalMarginPercent,
                 _watermark.PlaceWithinSourceContent,
                 cancellationToken);
+
+            _activatedAt = DateTimeOffset.UtcNow;
+            _blockRemainingSeconds = context.BlockRemainingTime.TotalSeconds;
+            if (context.TemplateVariables.TryGetValue("MediaItem_Tags", out object tagsObj) &&
+                tagsObj is IEnumerable<string> tagList)
+            {
+                _tags = tagList.ToList();
+            }
         }
         catch (Exception ex)
         {
@@ -98,12 +109,16 @@ public class WatermarkElement : ImageElementBase
         float opacity = _opacity;
         foreach (Expression expression in _maybeOpacityExpression)
         {
+            double elementSeconds = (DateTimeOffset.UtcNow - _activatedAt).TotalSeconds;
             opacity = OpacityExpressionHelper.GetOpacity(
                 expression,
                 timeOfDay,
                 contentTime,
                 contentTotalTime,
-                channelTime);
+                channelTime,
+                elementSeconds,
+                _blockRemainingSeconds,
+                _tags);
         }
 
         if (opacity == 0)

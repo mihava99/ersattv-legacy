@@ -282,6 +282,8 @@ public class TemplateDataRepository(IFileSystem fileSystem, IDbContextFactory<Tv
             .ThenInclude(mvm => mvm.Directors)
             .Include(mv => mv.MusicVideoMetadata)
             .ThenInclude(mvm => mvm.Genres)
+            .Include(mv => mv.MusicVideoMetadata)
+            .ThenInclude(mvm => mvm.Tags)
             .SelectOneAsync(mv => mv.Id, mv => mv.Id == musicVideoId, cancellationToken);
 
         foreach (MusicVideo musicVideo in maybeMusicVideo)
@@ -309,6 +311,7 @@ public class TemplateDataRepository(IFileSystem fileSystem, IDbContextFactory<Tv
                     [MediaItemTemplateDataKey.Directors] =
                         (metadata.Directors ?? []).Map(d => d.Name).OrderBy(identity),
                     [MediaItemTemplateDataKey.Genres] = (metadata.Genres ?? []).Map(g => g.Name).OrderBy(identity),
+                    [MediaItemTemplateDataKey.Tags] = (metadata.Tags ?? []).Map(t => t.Name).ToList(),
                     [MediaItemTemplateDataKey.Resolution] = new Resolution
                         { Height = headVersion.Height, Width = headVersion.Width },
                     [MediaItemTemplateDataKey.Duration] = headVersion.Duration
@@ -363,6 +366,7 @@ public class TemplateDataRepository(IFileSystem fileSystem, IDbContextFactory<Tv
                     [MediaItemTemplateDataKey.Directors] =
                         (metadata.Directors ?? []).Map(d => d.Name).OrderBy(identity),
                     [MediaItemTemplateDataKey.Genres] = (metadata.Genres ?? []).Map(g => g.Name).OrderBy(identity),
+                    [MediaItemTemplateDataKey.Tags] = (metadata.Tags ?? []).Map(t => t.Name).ToList(),
                     [MediaItemTemplateDataKey.Resolution] = new Resolution
                         { Height = headVersion.Height, Width = headVersion.Width },
                     [MediaItemTemplateDataKey.Duration] = headVersion.Duration

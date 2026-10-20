@@ -210,40 +210,40 @@
                     {
                         Either<BaseError, string> maybeNotes;
 
-                        // develop builds report v<next release>-<sha8>-<target>; their release is
-                        // v<next release>-<sha8>-develop in the develop builds repository
-                        Match developBuild = Regex.Match(version, @"^v?(\d+\.\d+\.\d+)-([0-9a-f]{8})-");
-                        if (developBuild.Success)
-                        {
-                            string developTag = $"v{developBuild.Groups[1].Value}-{developBuild.Groups[2].Value}-develop";
-                            maybeNotes = await GitHubApiClient.GetDevelopReleaseNotes(developTag, token);
-                            foreach (string notes in maybeNotes.RightToSeq())
-                            {
-                                _releaseNotes = notes;
-                            }
-                        }
-                        else if (version != "develop")
-                        {
-                            string gitHubVersion = version.Split("-").Head();
-                            if (!gitHubVersion.StartsWith("v"))
-                            {
-                                gitHubVersion = $"v{gitHubVersion}";
-                            }
+                        // Show custom local release notes instead of fetching from GitHub
+                        _ = version; // suppress unused variable warning
+                        maybeNotes = await GitHubApiClient.GetLatestReleaseNotes(token);
 
-                            maybeNotes = await GitHubApiClient.GetReleaseNotes(gitHubVersion, token);
-                            foreach (string notes in maybeNotes.RightToSeq())
-                            {
-                                _releaseNotes = notes;
-                            }
-                        }
-                        else
-                        {
-                            maybeNotes = await GitHubApiClient.GetLatestReleaseNotes(token);
-                            foreach (string notes in maybeNotes.RightToSeq())
-                            {
-                                _releaseNotes = notes;
-                            }
-                        }
+                        _releaseNotes = """
+## [VISUALXP_patch_v.0.2.1] - 2026-07-21
+### Reparari
+- Reparat bug-ul cu Sequential Schedule care nu construia programul pentru anumite zile
+- Reparat bug-ul prin care in mijlocul programului prioritar (alternate schedule), daca se da reset atunci, s-ar da cu intarziere continutul fata de ora stabilita in configuratia YAML
+
+## [VISUALXP_patch_v.0.2.0] - 2026-07-20
+### Adaugari
+- **Resetare a programului de tip sequential** in timpul derularii, fara sa fie decalata (spre exemplu, pana in ziua urmatoare, la ora 00:00)
+- `fade_in_seconds`, `fade_out_seconds`, `persistent`: tranzitii de tip fade la grafice de tip **imagine/text/motion**
+  - **ATENTIE:** in cazul in care redati clipuri muzicale, folositi fisiere de tip YAML separate pentru a nu avea tranzitii de fade unul dupa altul.
+- `skip_if_passed`, daca doriti un program cu o rotatie de 7 zile sa fie repetitiva sau doar o data.
+### Reparari
+- Reparat bug-ul cu Sequential Schedule prin care odata ce se termina un program prioritar pentru o zi/o perioada de zile, programul normal de 7 zile sa reia incepand cu ziua de Luni (Monday 00:00)
+
+
+## [VISUALXP_patch_v.0.1.0] - 2026-07-18
+### Adaugari
+- **Emisie in 50p** prin Normalize Framerate Fortat
+- **Ceas in format text**, prin document de tip text (preferabil prin aplicatii externe precum Snaz)
+  - `text_file: 'C:\Snaz\TextFiles\Time.txt'` + `text: "00:00"`, spre exemplu
+- **Text** ce se poate actualiza si se poate centra ori de cate ori se modifica
+- **Program de 7 zile**, diferit de la o zi la alta
+  - `wait_until: "Monday 00:00"` sau `wait_until: "Tuesday 19:00"` etc., spre exemplu
+- Programe cu zile **"prioritare"**, perfect pentru aniversari, sarbatori etc.
+  - `schedules`, `name`, `start_date`, `end_date`, `priority`
+- **Grafici** de tip imagine care sa apara in functie de metadata clipurilor
+  - Puteti avea, spre exemplu simbolul AP pe clipuri muzicale specifice, fara sa-l mai ardeti.
+  - `opacity_expression: "has_tag(\"TAGULVOSTRU\")"`, spre exemplu
+""";
                     }
                 }
 

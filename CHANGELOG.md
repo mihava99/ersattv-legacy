@@ -3,6 +3,20 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [VISUALXP_patch] - 2026-07-18
+### Adaugari
+- Emisie in 50p prin Normalize Framerate Fortat
+- Ceas in format text, prin document de tip text (preferabil prin aplicatii externe precum Snaz)
+  - `text_file: 'C:\Snaz\TextFiles\Time.txt'` + `text: "00:00"`, spre exemplu
+- Text ce se poate actualiza si se poate centra ori de cate ori se modifica
+- Program de 7 zile, diferit de la o zi la asta
+  - `wait_until: "Monday 00:00"` sau `wait_until: "Tuesday 19:00"` etc., spre exemplu
+- Programe cu zile "prioritare", perfect pentru aniversari, sarbatori etc.
+  - `schedules`, `name`, `start_date`, `end_date`, `priority`
+- Grafici de tip imagine care sa apara în functie de metadata clipurilor
+  - Puteti avea, spre exemplu simbolul AP pe clipuri muzicale specifice, fara sa-l mai ardeti.
+  - `opacity_expression: "has_tag(\"TAGULVOSTRU\")"`, spre exemplu
+
 ## [Unreleased]
 ### Changed
 - Next engine:

@@ -18,10 +18,25 @@ public record GraphicsEngineContext(
     DateTimeOffset ContentFinishTime,
     TimeSpan Seek,
     TimeSpan Duration,
-    TimeSpan ContentTotalDuration)
+    TimeSpan ContentTotalDuration,
+    /// <summary>
+    /// Time remaining until the end of the current playout block
+    /// (e.g. the whole commercial break, not just the current item).
+    /// Available as block_remaining_seconds in opacity_expression.
+    /// Defaults to TimeSpan.Zero when not applicable.
+    /// </summary>
+    TimeSpan BlockRemainingTime = default,
+    /// <summary>
+    /// Graphics elements that have been graphics_off'd with a fade_out_seconds value.
+    /// These are injected into LoadAll so they continue rendering during their fade.
+    /// Key: element path, Value: (fade_out_seconds, activated_at)
+    /// </summary>
+    List<FadingOutElementContext> FadingOutElements = null)
 {
     public Option<CanvasRegion> Region { get; init; }
 }
+
+public record FadingOutElementContext(string Path, double FadeOutSeconds, DateTimeOffset ActivatedAt);
 
 public abstract record GraphicsElementContext;
 

@@ -380,7 +380,7 @@ public class FFmpegPlaybackSettingsCalculatorTests
 
             IDisplaySize scaledSize = actual.ScaledSize.IfNone(new MediaVersion { Width = 0, Height = 0 });
             scaledSize.Width.ShouldBe(1280);
-            scaledSize.Height.ShouldBe(554);
+            scaledSize.Height.ShouldBe(552);
             actual.PadToDesiredResolution.ShouldBeTrue();
         }
 
@@ -439,7 +439,7 @@ public class FFmpegPlaybackSettingsCalculatorTests
 
             IDisplaySize scaledSize = actual.ScaledSize.IfNone(new MediaVersion { Width = 0, Height = 0 });
             scaledSize.Width.ShouldBe(640);
-            scaledSize.Height.ShouldBe(480);
+            scaledSize.Height.ShouldBe(478);
             actual.PadToDesiredResolution.ShouldBeFalse();
         }
 

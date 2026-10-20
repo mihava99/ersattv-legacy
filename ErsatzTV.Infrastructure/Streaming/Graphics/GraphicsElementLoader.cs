@@ -33,6 +33,11 @@ public partial class GraphicsElementLoader(
     {
         try
         {
+            // Notify persistence store which elements are active for THIS item.
+            // This lets GraphicsPersistenceStore detect graphics_off between items
+            // by comparing current element IDs vs previous item's element IDs.
+            GraphicsPersistenceStore.UpdateActiveElements(elements.Select(e => e.GraphicsElementId).Where(id => id.HasValue).Select(id => id!.Value));
+
             // get max epg entries
             int epgEntries = await GetMaxEpgEntries(elements, cancellationToken);
 
@@ -63,6 +68,8 @@ public partial class GraphicsElementLoader(
 
                         foreach (TextGraphicsElement element in maybeElement)
                         {
+                            element.ElementId = reference.GraphicsElementId ?? 0;
+                            ApplyVariableOverrides(element, reference.Variables);
                             context.Elements.Add(new TextElementDataContext(element));
                         }
 
@@ -83,6 +90,8 @@ public partial class GraphicsElementLoader(
 
                         foreach (ImageGraphicsElement element in maybeElement)
                         {
+                            element.ElementId = reference.GraphicsElementId ?? 0;
+                            ApplyVariableOverrides(element, reference.Variables);
                             context.Elements.Add(new ImageElementDataContext(element));
                         }
 
@@ -103,6 +112,8 @@ public partial class GraphicsElementLoader(
 
                         foreach (MotionGraphicsElement element in maybeElement)
                         {
+                            element.ElementId = reference.GraphicsElementId ?? 0;
+                            ApplyVariableOverrides(element, reference.Variables);
                             context.Elements.Add(new MotionElementDataContext(element));
                         }
 
@@ -289,7 +300,8 @@ public partial class GraphicsElementLoader(
             [ChannelTemplateDataKey.ChannelStartTime] = context.ChannelStartTime,
             [MediaItemTemplateDataKey.StreamSeek] = context.Seek,
             [MediaItemTemplateDataKey.Start] = context.ContentStartTime,
-            [MediaItemTemplateDataKey.Stop] = context.ContentFinishTime
+            [MediaItemTemplateDataKey.Stop] = context.ContentFinishTime,
+            ["block_remaining_seconds"] = context.BlockRemainingTime.TotalSeconds
         };
 
         // media item variables
@@ -351,6 +363,41 @@ public partial class GraphicsElementLoader(
         }
     }
 
+
+    private static void ApplyVariableOverrides(BaseGraphicsElement element, string variablesJson)
+    {
+        if (string.IsNullOrWhiteSpace(variablesJson)) return;
+        try
+        {
+            var vars = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(variablesJson)
+                       ?? new Dictionary<string, string>();
+
+            if (vars.TryGetValue("fade_in_seconds", out string fiStr) &&
+                double.TryParse(fiStr, System.Globalization.NumberStyles.Any,
+                    System.Globalization.CultureInfo.InvariantCulture, out double fi))
+            {
+                switch (element)
+                {
+                    case ImageGraphicsElement img: img.FadeInSeconds = fi; break;
+                    case TextGraphicsElement txt: txt.FadeInSeconds = fi; break;
+                    case MotionGraphicsElement mot: mot.FadeInSeconds = fi; break;
+                }
+            }
+
+            if (vars.TryGetValue("fade_out_seconds", out string foStr) &&
+                double.TryParse(foStr, System.Globalization.NumberStyles.Any,
+                    System.Globalization.CultureInfo.InvariantCulture, out double fo))
+            {
+                switch (element)
+                {
+                    case ImageGraphicsElement img: img.FadeOutSeconds = fo; break;
+                    case TextGraphicsElement txt: txt.FadeOutSeconds = fo; break;
+                    case MotionGraphicsElement mot: mot.FadeOutSeconds = fo; break;
+                }
+            }
+        }
+        catch { }
+    }
     private Option<T> FromYaml<T>(TemplatedYaml yaml) where T : BaseGraphicsElement
     {
         try
@@ -363,10 +410,64 @@ public partial class GraphicsElementLoader(
 
             IDeserializer deserializer = new DeserializerBuilder()
                 .WithNamingConvention(CamelCaseNamingConvention.Instance)
+                .IgnoreUnmatchedProperties()
                 .Build();
 
             var result = deserializer.Deserialize<T>(yaml.Yaml);
             result.SourceFileName = yaml.SourceFileName;
+
+            // Manually read snake_case properties that CamelCaseNamingConvention cannot
+            // map automatically. Read them via regex from the rendered YAML string,
+            // the same way GetMaxEpgEntries reads epg_entries.
+            if (result is TextGraphicsElement textElement)
+            {
+                Match textFileMatch = TextFileRegex().Match(yaml.Yaml);
+                if (textFileMatch.Success)
+                {
+                    textElement.TextFile = textFileMatch.Groups[1].Value.Trim().Trim('\'').Trim('"');
+                }
+            }
+
+            // Inject persistent flag for all element types via regex
+            Match persistentMatch = PersistentRegex().Match(yaml.Yaml);
+            if (persistentMatch.Success &&
+                persistentMatch.Groups[1].Value.Trim().Equals("true", StringComparison.OrdinalIgnoreCase))
+            {
+                switch (result)
+                {
+                    case ImageGraphicsElement img: img.Persistent = true; break;
+                    case TextGraphicsElement txt: txt.Persistent = true; break;
+                    case MotionGraphicsElement mot: mot.Persistent = true; break;
+                }
+            }
+
+            // Inject fade_in_seconds and fade_out_seconds via regex
+            Match fadeInMatch = FadeInSecondsRegex().Match(yaml.Yaml);
+            if (fadeInMatch.Success && double.TryParse(fadeInMatch.Groups[1].Value,
+                System.Globalization.NumberStyles.Any,
+                System.Globalization.CultureInfo.InvariantCulture, out double fadeIn))
+            {
+                switch (result)
+                {
+                    case ImageGraphicsElement img: img.FadeInSeconds = fadeIn; break;
+                    case TextGraphicsElement txt: txt.FadeInSeconds = fadeIn; break;
+                    case MotionGraphicsElement mot: mot.FadeInSeconds = fadeIn; break;
+                }
+            }
+
+            Match fadeOutMatch = FadeOutSecondsRegex().Match(yaml.Yaml);
+            if (fadeOutMatch.Success && double.TryParse(fadeOutMatch.Groups[1].Value,
+                System.Globalization.NumberStyles.Any,
+                System.Globalization.CultureInfo.InvariantCulture, out double fadeOut))
+            {
+                switch (result)
+                {
+                    case ImageGraphicsElement img: img.FadeOutSeconds = fadeOut; break;
+                    case TextGraphicsElement txt: txt.FadeOutSeconds = fadeOut; break;
+                    case MotionGraphicsElement mot: mot.FadeOutSeconds = fadeOut; break;
+                }
+            }
+
             return result;
         }
         catch (Exception ex)
@@ -409,6 +510,18 @@ public partial class GraphicsElementLoader(
 
     [GeneratedRegex(@"epg_entries:\s*(\d+)")]
     private static partial Regex EpgEntriesRegex();
+
+    [GeneratedRegex(@"text_file:\s*'?""?([^'""\n]+)'?""?")]
+    private static partial Regex TextFileRegex();
+
+    [GeneratedRegex(@"persistent:\s*(true|false)", RegexOptions.IgnoreCase)]
+    private static partial Regex PersistentRegex();
+
+    [GeneratedRegex(@"fade_in_seconds:\s*([0-9]*\.?[0-9]+)")]
+    private static partial Regex FadeInSecondsRegex();
+
+    [GeneratedRegex(@"fade_out_seconds:\s*([0-9]*\.?[0-9]+)")]
+    private static partial Regex FadeOutSecondsRegex();
 
     private record TemplatedYaml(string SourceFileName, string Yaml);
 }

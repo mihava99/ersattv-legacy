@@ -26,8 +26,10 @@ public class YamlPlayoutPadUntilHandler(EnumeratorCache enumeratorCache) : YamlP
         {
             //logger.LogDebug("Will pad until time {Time}", result);
 
-            var dayOnly = DateOnly.FromDateTime(targetTime.LocalDateTime);
-            var timeOnly = TimeOnly.FromDateTime(targetTime.LocalDateTime);
+            // Use ToLocalTime() to get correct local time regardless of offset stored in CurrentTime
+            var localDateTime = targetTime.ToLocalTime().DateTime;
+            var dayOnly = DateOnly.FromDateTime(localDateTime);
+            var timeOnly = TimeOnly.FromDateTime(localDateTime);
 
             if (timeOnly > result)
             {
@@ -50,6 +52,16 @@ public class YamlPlayoutPadUntilHandler(EnumeratorCache enumeratorCache) : YamlP
             }
             else
             {
+                // If we just crossed midnight naturally (within 60 min of midnight)
+                // and the pad target is well into the day (after 6:00 AM), this pad
+                // belongs to the previous day's block — skip it to avoid filling the
+                // entire next day with filler content and causing an UNSCHEDULED gap.
+                if (timeOnly.Hour == 0 && timeOnly.Minute < 60 && result.Hour >= 6)
+                {
+                    // Crossed midnight — this pad belongs to yesterday, skip it
+                    return false;
+                }
+
                 // this is wrong when offset changes
                 targetTime = new DateTimeOffset(dayOnly, result, targetTime.Offset);
             }

@@ -27,6 +27,7 @@ public static class MediaItemTemplateDataKey
     public static readonly string ShowGenres = "MediaItem_ShowGenres";
 
     // music video
+    public static readonly string Tags = "MediaItem_Tags";
     public static readonly string Track = "MediaItem_Track";
     public static readonly string Album = "MediaItem_Album";
     public static readonly string Artist = "MediaItem_Artist";

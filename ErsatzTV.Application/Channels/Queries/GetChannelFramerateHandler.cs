@@ -12,6 +12,13 @@ public class GetChannelFramerateHandler(
     ILogger<GetChannelFramerateHandler> logger)
     : IRequestHandler<GetChannelFramerate, Option<FrameRate>>
 {
+    // ── Hardcoded target framerate ────────────────────────────────────────────
+    // Original logic picked the MINIMUM framerate above 23fps found in the
+    // playout, which caused 29.97fps content to normalize down and tank
+    // transcoding speed. We instead always normalize to 50fps so the pipeline
+    // runs at a fixed rate regardless of source content framerate.
+    private static readonly FrameRate TargetFrameRate = new("50/1");
+
     public async Task<Option<FrameRate>> Handle(GetChannelFramerate request, CancellationToken cancellationToken)
     {
         try
@@ -30,65 +37,54 @@ public class GetChannelFramerateHandler(
                 return Option<FrameRate>.None;
             }
 
-            // TODO: expand to check everything in collection rather than what's scheduled?
             logger.LogDebug("Checking frame rates for channel {ChannelNumber}", request.ChannelNumber);
 
             List<Playout> playouts = await dbContext.Playouts
                 .AsNoTracking()
                 .Include(p => p.Items)
-                .ThenInclude(pi => pi.MediaItem)
-                .ThenInclude(mi => (mi as Movie).MediaVersions)
+                    .ThenInclude(pi => pi.MediaItem)
+                    .ThenInclude(mi => (mi as Movie).MediaVersions)
                 .Include(p => p.Items)
-                .ThenInclude(pi => pi.MediaItem)
-                .ThenInclude(mi => (mi as Episode).MediaVersions)
+                    .ThenInclude(pi => pi.MediaItem)
+                    .ThenInclude(mi => (mi as Episode).MediaVersions)
                 .Include(p => p.Items)
-                .ThenInclude(pi => pi.MediaItem)
-                .ThenInclude(mi => (mi as Song).MediaVersions)
+                    .ThenInclude(pi => pi.MediaItem)
+                    .ThenInclude(mi => (mi as Song).MediaVersions)
                 .Include(p => p.Items)
-                .ThenInclude(pi => pi.MediaItem)
-                .ThenInclude(mi => (mi as MusicVideo).MediaVersions)
+                    .ThenInclude(pi => pi.MediaItem)
+                    .ThenInclude(mi => (mi as MusicVideo).MediaVersions)
                 .Include(p => p.Items)
-                .ThenInclude(pi => pi.MediaItem)
-                .ThenInclude(mi => (mi as OtherVideo).MediaVersions)
+                    .ThenInclude(pi => pi.MediaItem)
+                    .ThenInclude(mi => (mi as OtherVideo).MediaVersions)
                 .Include(p => p.Items)
-                .ThenInclude(pi => pi.MediaItem)
-                .ThenInclude(mi => (mi as Image).MediaVersions)
+                    .ThenInclude(pi => pi.MediaItem)
+                    .ThenInclude(mi => (mi as Image).MediaVersions)
                 .Include(p => p.Items)
-                .ThenInclude(pi => pi.MediaItem)
-                .ThenInclude(mi => (mi as RemoteStream).MediaVersions)
+                    .ThenInclude(pi => pi.MediaItem)
+                    .ThenInclude(mi => (mi as RemoteStream).MediaVersions)
                 .Filter(p => p.Channel.Number == request.ChannelNumber)
                 .ToListAsync(cancellationToken);
 
-            var frameRates = playouts.Map(p => p.Items.Map(i => i.MediaItem.GetHeadVersion()))
+            var frameRates = playouts
+                .Map(p => p.Items.Map(i => i.MediaItem.GetHeadVersion()))
                 .Flatten()
                 .Map(mv => new FrameRate(mv.RFrameRate))
                 .ToList();
 
             var distinct = frameRates.Distinct().ToList();
+
             if (distinct.Count > 1)
             {
-                // TODO: something more intelligent than minimum framerate?
-                var validFrameRates = frameRates.Where(fr => fr.ParsedFrameRate > 23).ToList();
-                if (validFrameRates.Count > 0)
-                {
-                    FrameRate result = validFrameRates.MinBy(fr => fr.ParsedFrameRate);
-                    logger.LogInformation(
-                        "Normalizing frame rate for channel {ChannelNumber} from {Distinct} to {FrameRate}",
-                        request.ChannelNumber,
-                        distinct.Map(fr => fr.RFrameRate),
-                        result.RFrameRate);
-                    return result;
-                }
-
-                FrameRate minFrameRate = frameRates.MinBy(fr => fr.ParsedFrameRate);
+                // Mixed framerates on channel — normalize everything to 50fps.
+                // Original code picked MinBy(ParsedFrameRate) which caused
+                // 29.97fps sources to drag the whole pipeline down.
                 logger.LogInformation(
-                    "Normalizing frame rate for channel {ChannelNumber} from {Distinct} to {FrameRate} instead of min value {MinFrameRate}",
+                    "Normalizing frame rate for channel {ChannelNumber} from {Distinct} to {FrameRate}",
                     request.ChannelNumber,
                     distinct.Map(fr => fr.RFrameRate),
-                    FrameRate.DefaultFrameRate.RFrameRate,
-                    minFrameRate.RFrameRate);
+                    TargetFrameRate.RFrameRate);
 
-                return FrameRate.DefaultFrameRate;
+                return TargetFrameRate;
             }
 
             if (distinct.Count != 0)
