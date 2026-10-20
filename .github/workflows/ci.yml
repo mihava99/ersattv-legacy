@@ -32,6 +32,10 @@ jobs:
 
   build_artifacts:
     uses: ./.github/workflows/artifacts.yml
+    # artifacts.yml requests these; a fork's default token is read-only, which fails the whole run at startup
+    permissions:
+      contents: write
+      id-token: write
     needs: calculate_version
     with:
       tag: ${{ needs.calculate_version.outputs.tag }}
