@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Runtime.CompilerServices;
 using NCalc;
 using NCalc.Handlers;
 
@@ -6,6 +7,8 @@ namespace ErsatzTV.Infrastructure.Streaming.Graphics;
 
 public static class OpacityExpressionHelper
 {
+    private static readonly ConditionalWeakTable<Expression, HasTagHandler> HasTagHandlers = new();
+
     public static void EvaluateFunction(string name, FunctionEventArgs args)
     {
         switch (name)
@@ -110,19 +113,41 @@ public static class OpacityExpressionHelper
         // Useful in opacity_expression to show/hide elements based on content metadata:
         //   opacity_expression: "has_tag(\"PARENTALGUIDANCE_on\")"
         // The tag list is injected from MediaItem_Tags template variable at runtime.
-        var tagList = tags ?? [];
-        expression.EvaluateFunction -= OnEvaluateHasTag; // prevent double-registration
-        expression.EvaluateFunction += OnEvaluateHasTag;
-
-        void OnEvaluateHasTag(string name, FunctionEventArgs args)
-        {
-            if (name != "has_tag") return;
-            if (args.Parameters.Count != 1) { args.Result = 0; return; }
-            string tagName = args.Parameters.Evaluate(0)?.ToString() ?? string.Empty;
-            args.Result = tagList.Any(t => string.Equals(t, tagName, StringComparison.OrdinalIgnoreCase)) ? 1 : 0;
-        }
+        // This runs for every frame, so the handler is registered once per expression.
+        // A new delegate per call can't be removed with -=, so handlers would pile up.
+        HasTagHandler hasTagHandler = HasTagHandlers.GetValue(
+            expression,
+            e =>
+            {
+                var handler = new HasTagHandler();
+                e.EvaluateFunction += handler.Handle;
+                return handler;
+            });
+        hasTagHandler.Tags = tags ?? [];
 
         object expressionResult = expression.Evaluate();
         return Convert.ToSingle(expressionResult, CultureInfo.InvariantCulture);
+    }
+
+    private sealed class HasTagHandler
+    {
+        public IReadOnlyList<string> Tags { get; set; } = [];
+
+        public void Handle(string name, FunctionEventArgs args)
+        {
+            if (name != "has_tag")
+            {
+                return;
+            }
+
+            if (args.Parameters.Count != 1)
+            {
+                args.Result = 0;
+                return;
+            }
+
+            string tagName = args.Parameters.Evaluate(0)?.ToString() ?? string.Empty;
+            args.Result = Tags.Any(t => string.Equals(t, tagName, StringComparison.OrdinalIgnoreCase)) ? 1 : 0;
+        }
     }
 }

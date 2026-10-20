@@ -163,43 +163,58 @@ public partial class TextElement(
                 channelTime);
         }
 
-        return opacity == 0
+        return opacity == 0 || _image is null
             ? ValueTask.FromResult(Option<PreparedElementImage>.None)
             : new ValueTask<Option<PreparedElementImage>>(new PreparedElementImage(_image, _location, opacity, ZIndex, false));
     }
 
     private void RebuildImage(string newText)
     {
+        SKBitmap newImage = null;
         try
         {
-            _image?.Dispose();
-            RichTextKit.TextBlock textBlock = BuildTextBlock(newText);
-            _image = new SKBitmap(
-                (int)Math.Ceiling(textBlock.MeasuredWidth),
-                (int)Math.Ceiling(textBlock.MeasuredHeight));
-            using var canvas = new SKCanvas(_image);
-            canvas.Clear(SKColors.Transparent);
-            textBlock.Paint(canvas, new SKPoint(0, 0));
+            SKPointI newLocation = _location;
 
-            // Recalculate position since text width may have changed
-            if (_context != null)
+            // empty text (e.g. a cleared file) shows nothing
+            if (!string.IsNullOrEmpty(newText))
             {
-                var horizontalMargin =
-                    (int)Math.Round((textElement.HorizontalMarginPercent ?? 0) / 100.0 * _context.FrameSize.Width);
-                var verticalMargin =
-                    (int)Math.Round((textElement.VerticalMarginPercent ?? 0) / 100.0 * _context.FrameSize.Height);
-                _location = CalculatePosition(
-                    textElement.Location,
-                    _context.FrameSize.Width,
-                    _context.FrameSize.Height,
-                    _image.Width,
-                    _image.Height,
-                    horizontalMargin,
-                    verticalMargin);
+                RichTextKit.TextBlock textBlock = BuildTextBlock(newText);
+                newImage = new SKBitmap(
+                    (int)Math.Ceiling(textBlock.MeasuredWidth),
+                    (int)Math.Ceiling(textBlock.MeasuredHeight));
+                using (var canvas = new SKCanvas(newImage))
+                {
+                    canvas.Clear(SKColors.Transparent);
+                    textBlock.Paint(canvas, new SKPoint(0, 0));
+                }
+
+                // Recalculate position since text width may have changed
+                if (_context != null)
+                {
+                    var horizontalMargin =
+                        (int)Math.Round((textElement.HorizontalMarginPercent ?? 0) / 100.0 * _context.FrameSize.Width);
+                    var verticalMargin =
+                        (int)Math.Round((textElement.VerticalMarginPercent ?? 0) / 100.0 * _context.FrameSize.Height);
+                    newLocation = CalculatePosition(
+                        textElement.Location,
+                        _context.FrameSize.Width,
+                        _context.FrameSize.Height,
+                        newImage.Width,
+                        newImage.Height,
+                        horizontalMargin,
+                        verticalMargin);
+                }
             }
+
+            // swap first and dispose the old image last, so a failure above keeps the previous image drawable
+            SKBitmap oldImage = _image;
+            _image = newImage;
+            _location = newLocation;
+            oldImage?.Dispose();
         }
         catch (Exception ex)
         {
+            newImage?.Dispose();
             logger.LogWarning(ex, "Failed to rebuild text image from file");
         }
     }
