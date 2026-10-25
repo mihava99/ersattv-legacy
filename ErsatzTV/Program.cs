@@ -1,8 +1,6 @@
 ﻿using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.InteropServices;
-using System.Security.Cryptography;
-using System.Text;
 using Destructurama;
 using ErsatzTV.Core;
 using ErsatzTV.Services.Validators;
@@ -49,18 +47,12 @@ public class Program
 
     public static async Task<int> Main(string[] args)
     {
-        // Keyed on the config folder, not a constant, so an instance running against an
-        // isolated ETV_CONFIG_FOLDER (a staging copy) can coexist with the primary one.
-        string singletonId = Convert.ToHexString(
-            SHA256.HashData(Encoding.UTF8.GetBytes(FileSystemLayout.AppDataFolder)))[..16];
-
-        using var _ = new Mutex(
-            true,
-            $"Global\\ErsatzTV.Singleton.{singletonId}",
-            out bool createdNew);
-        if (!createdNew)
+        // named mutexes need a writable home since .NET 10.0.13;
+        // a file lock also blocks containers sharing a config folder
+        using FileStream singletonLock = TryLockConfigFolder(out bool alreadyRunning);
+        if (alreadyRunning)
         {
-            Console.WriteLine("Another instance of ErsatztTV is already running.");
+            Console.WriteLine("Another instance of ErsatzTV is already running with this config folder.");
             return 1;
         }
 
@@ -162,6 +154,51 @@ public class Program
             await Log.CloseAndFlushAsync();
         }
     }
+
+    private static FileStream TryLockConfigFolder(out bool alreadyRunning)
+    {
+        alreadyRunning = false;
+        string lockPath = Path.Combine(FileSystemLayout.AppDataFolder, "ersatztv.lock");
+
+        try
+        {
+            Directory.CreateDirectory(FileSystemLayout.AppDataFolder);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // lock file open below reports the error
+        }
+
+        // NFS silently skips the lock on a read-only handle; read-only is only a fallback
+        // for a lock file owned by another uid or a read-only config folder
+        Exception lastError = null;
+        foreach (FileAccess access in new[] { FileAccess.ReadWrite, FileAccess.Read })
+        {
+            try
+            {
+                return new FileStream(lockPath, FileMode.OpenOrCreate, access, FileShare.None);
+            }
+            catch (IOException ex) when (IsSharingViolation(ex))
+            {
+                alreadyRunning = true;
+                return null;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                lastError = ex;
+            }
+        }
+
+        Console.WriteLine(
+            $"Unable to lock config folder; continuing without single instance check: {lastError?.Message}");
+        return null;
+    }
+
+    // on unix, HResult is the raw errno (EWOULDBLOCK), not an HRESULT
+    private static bool IsSharingViolation(IOException ex) =>
+        OperatingSystem.IsWindows()
+            ? ex.HResult is unchecked((int)0x80070020) or unchecked((int)0x80070021)
+            : ex.HResult == (OperatingSystem.IsLinux() ? 11 : 35);
 
     private static IHostBuilder CreateHostBuilder(string[] args)
     {

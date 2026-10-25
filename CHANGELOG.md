@@ -26,17 +26,66 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - `opacity_expression: "has_tag(\"TAGULVOSTRU\")"`, spre exemplu
 
 ## [Unreleased]
+### Added
+- Next engine:
+  - VAAPI: tonemap with `libplacebo` when a Vulkan device on the same GPU (Intel or AMD) is available
+  - VAAPI: encode HEVC with low-power entrypoint when possible; this can greatly improve performance
+  - Use default legacy background (`background.png`) for offline and error streams
+
+### Changed
+- Use ErsatzTV-ffmpeg `8.1.2-6` in docker images, Windows packages and macOS packages
+  - Fix Vulkan to VAAPI reverse mapping synchronization
+  - Fix `av1_qsv` decoder exporting duplicate HDR side data
+  - Fix macOS VideoToolbox `h264` decoding failure on content with many reference frames
+
+### Fixed
+- Next engine:
+  - Fix VAAPI stream failing to start on AMD when an OpenCL runtime (e.g. NVIDIA, rusticl) is installed
+
+## [26.11.5] - 2026-10-24
+### Fixed
+- Fix startup crash `The system cannot open the device or file specified` when running as a non-root user or with a read-only root filesystem
+  - This was caused by a .NET runtime security update that changed where single-instance checks are stored
+  - ErsatzTV now uses a lock file in the config folder, which also prevents multiple instances (e.g. two docker containers) from sharing the same config folder
+
+## [26.11.4] - 2026-10-23
+### Added
+- Add `Upload Results` button to playback troubleshooting
+  - Results are encrypted on your ErsatzTV server so only the ErsatzTV maintainer can read them
+  - The upload returns an ID (e.g. `etv-xxxx-xxxxxx`) to paste into a GitHub issue or Discord thread
+  - Uploads are deleted from the upload server after 7 days
+  - `Download Results` still works when ErsatzTV can't reach the upload server
+- Detect DolbyVision content from media server libraries
+  - This enables the next engine to use the appropriate tonemapping filter
+
 ### Changed
 - Next engine:
   - Watermark-only graphics canvases render just the area the watermarks cover instead of the full frame
     - This reduces CPU use and GPU upload for animated or opacity-expression watermarks
     - This is currently limited to local watermarks; remote/URL watermarks will still send the full frame
+  - Remove VideoToolbox `h264` encoder workaround that stripped A53 closed captions
+    - This is no longer needed with ErsatzTV-ffmpeg `8.1.2-5`
+- Use ErsatzTV-ffmpeg `8.1.2-5` in docker images, Windows packages and macOS packages
+  - Fix transcoding speed drop when burning in image subtitles, especially with TrueHD audio
+  - Fix macOS VideoToolbox encoding failure when video contains A53 closed captions
+  - Add RKMPP accel support to arm64 docker image and native package; Jellyfin ffmpeg is no longer required
 
 ### Fixed
 - Next engine:
   - Fix active channels falling behind schedule when the playout is updated
   - Fix image subtitles (e.g. PGS) missing or misplaced with hardware acceleration when the subtitle size differs from the video size (e.g. cropped video)
   - Fix QSV stream failing when no Intel device is found; the channel now uses a software pipeline
+  - Fix QSV green padding on Windows with certain HDR content
+  - Fix slow transcoding of high-resolution video with PGS subtitles until the first subtitle appears
+  - Fix RKMPP stream failing with loudness normalization
+  - Fix VAAPI blocky, smeared `h264` video on older AMD GPUs
+- Fix Jellyfin external audio files being added as audio streams with negative indexes
+  - These broke playback of the whole playout file with the next engine (`expected u32`)
+  - Affected Jellyfin movies and episodes will be rescanned automatically
+- Fix channel troubleshooting `Play` button being disabled with no explanation
+  - Date and time now defaults to the current time and shows an error when it can't be parsed
+- Fix some extracted ASS subtitles never being displayed
+  - Affected subtitles that were already extracted will be repaired automatically on startup
 
 ## [26.11.3] - 2026-10-13
 ### Changed
@@ -3680,7 +3729,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Initial release to facilitate testing outside of Docker.
 
 
-[Unreleased]: https://github.com/ErsatzTV/legacy/compare/v26.11.3...HEAD
+[Unreleased]: https://github.com/ErsatzTV/legacy/compare/v26.11.5...HEAD
+[26.11.5]: https://github.com/ErsatzTV/legacy/compare/v26.11.4...v26.11.5
+[26.11.4]: https://github.com/ErsatzTV/legacy/compare/v26.11.3...v26.11.4
 [26.11.3]: https://github.com/ErsatzTV/legacy/compare/v26.11.2...v26.11.3
 [26.11.2]: https://github.com/ErsatzTV/legacy/compare/v26.11.1...v26.11.2
 [26.11.1]: https://github.com/ErsatzTV/legacy/compare/v26.11.0...v26.11.1
