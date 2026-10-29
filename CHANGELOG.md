@@ -3,9 +3,9 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [VISUALXP_patch_v.0.2.4] - 2026-10-30
+## [VISUALXP_patch_v.0.2.5] - 2026-10-30
 ### Fixed
-- Install packages bundled develop builds of ffmpeg and ErsatzTV Next, which failed on Windows with "Cannot allocate memory". They now bundle the stable versions shipped by the official v26.11.3 release (ffmpeg 8.1.2-4, Next v0.2.2). No application changes.
+- Install packages bundle the stable ErsatzTV-ffmpeg 8.1.2-6 instead of a develop build, which failed on Windows with "Cannot allocate memory". Next stays on the develop build this code needs (0.2.4 used Next v0.2.2, which cannot read the channel config this version sends, so channels did not start). No application changes.
 
 ## [VISUALXP_patch_v.0.2.2] - 2026-10-21
 ### Changed
