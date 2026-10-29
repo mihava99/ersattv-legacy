@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Downloads the pieces bundled next to ErsatzTV: ffmpeg, ersatztv-channel (and the tray launcher on Windows).
-# Plain public downloads, no login or token. Versions come from the pins the repo already has:
-# .github/ffmpeg.json and .github/next-tag.
+# Plain public downloads, no login or token. Versions come from installer/pins.env.
 #
 #   fetch-deps.sh <linux-x64|linux-arm64|win-x64> <output folder>
 set -euo pipefail
@@ -32,9 +31,10 @@ extract() { # extract <archive> <folder>
   esac
 }
 
-# ---- ffmpeg (checksum list is pinned in .github/ffmpeg.json, like the upstream build)
-read -r tag repo _ <<< "$("$root/.github/scripts/ffmpeg-pin.sh")"
-pinned_sums="$(jq -er .sha256sums "$root/.github/ffmpeg.json")"
+# ---- ffmpeg (checksum list is pinned in installer/pins.env)
+# shellcheck source=pins.env
+source "$root/installer/pins.env"
+tag="$FFMPEG_TAG" repo="$FFMPEG_REPO" pinned_sums="$FFMPEG_SHA256SUMS"
 version="${tag%%-*}"
 if [[ "$tag" =~ -([0-9a-f]{8})-develop$ ]]; then extra="etv.dev.${BASH_REMATCH[1]}"; else extra="etv.${tag#*-}"; fi
 base="ffmpeg-n${version}-${extra}-${ffmpeg_target}-gpl-${version%.*}"
@@ -56,7 +56,7 @@ fi
 cp "$ffmpeg_dir/LICENSE.txt" "$out/ffmpeg-LICENSE.txt"
 
 # ---- ersatztv-channel
-read -r next_tag next_repo <<< "$("$root/.github/scripts/next-pin.sh")"
+next_tag="$NEXT_TAG" next_repo="$NEXT_REPO"
 next_base="ersatztv-next-${next_tag}-${next_target}"
 case "$next_target" in windows-*) next_asset="${next_base}.zip" ;; *) next_asset="${next_base}.tar.gz" ;; esac
 download "https://github.com/${next_repo}/releases/download/${next_tag}/${next_asset}" "$tmp/${next_asset}"
