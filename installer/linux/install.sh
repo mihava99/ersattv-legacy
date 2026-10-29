@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ErsatzTV Legacy installer for Linux (systemd).
 #
-# Download the Linux package from GitHub Actions, unzip it, then in that folder run:
+# Download the Linux package (GitHub Releases, or Actions artifacts), unpack it, then in that folder run:
 #
 #   sudo bash install.sh
 #

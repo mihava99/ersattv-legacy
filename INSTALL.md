@@ -1,10 +1,11 @@
 # Installing ErsatzTV Legacy
 
-Builds come from the **Build** workflow on the Actions tab. Nothing is published as a release.
+Get the latest build from the **Releases** page (right side of the repository's main page).
+Download the file for your system and follow the steps below.
 
-1. Open the **Actions** tab, choose **Build**, and open the newest green run.
-   (No run yet? Use **Run workflow** on that page.)
-2. Under **Artifacts** at the bottom, download the one for your system:
+Every push also builds the same packages as **Artifacts**: open the **Actions** tab, choose **Build**,
+open the newest green run and download from **Artifacts** at the bottom. Those are zips containing
+the same files, named like this:
 
 | System | Artifact |
 |---|---|
@@ -16,7 +17,7 @@ Everything ErsatzTV needs (ffmpeg included) is in the package. There is nothing 
 
 ## Windows
 
-1. Unzip the download and double-click **ErsatzTV-Legacy-Setup-win-x64.exe**.
+1. Double-click the **...-win-x64-Setup.exe** you downloaded. (From an Actions artifact? Unzip it first; the file is **ErsatzTV-Legacy-Setup-win-x64.exe**.)
 2. Windows may say *"Windows protected your PC"* because the installer is not code-signed. Click **More info**, then **Run anyway**.
 3. Keep the pre-ticked options unless you have a reason not to, then click **Install** and **Finish**.
 
@@ -26,8 +27,8 @@ Your channels, settings and logs live in `%LOCALAPPDATA%\ersatztv`, so upgrading
 ## Linux (systemd distributions: Ubuntu, Debian, Fedora, Arch, openSUSE, ...)
 
 ```bash
-unzip ErsatzTV-Legacy-linux-x64.zip -d ersatztv
-cd ersatztv
+tar xzf ErsatzTV-Legacy-*-linux-x64.tar.gz     # from an Actions artifact: unzip it instead
+cd ErsatzTV-Legacy-*-linux-x64
 sudo bash install.sh
 ```
 
