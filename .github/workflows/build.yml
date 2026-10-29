@@ -1,0 +1,112 @@
+name: Build
+
+# Builds the Linux (x64, arm64) and Windows (x64) install packages.
+# Download them from the run's Artifacts. See INSTALL.md.
+# The version shown in the app is InformationalVersion from Directory.Build.props.
+on:
+  push:
+    branches:
+      - visualxp-patch
+    paths-ignore:
+      - '**/*.md'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: linux-x64, os: ubuntu-latest }
+          - { target: linux-arm64, os: ubuntu-24.04-arm }
+          - { target: win-x64, os: ubuntu-latest }
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      # Same publish settings as the upstream release build.
+      # NuGetAudit is off because a new MySqlConnector advisory (NU1902) is a warning,
+      # and this repo turns warnings into errors, which would fail the build.
+      - name: Build
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          dotnet restore -r "$TARGET" -p:NuGetAudit=false
+          sed -i '/Scanner/d' ErsatzTV/ErsatzTV.csproj
+          for project in "ErsatzTV.Scanner/ErsatzTV.Scanner.csproj:scanner" "ErsatzTV/ErsatzTV.csproj:main"; do
+            dotnet publish "${project%%:*}" --framework net10.0 --runtime "$TARGET" -c Release -o "${project##*:}" \
+              -p:RestoreEnablePackagePruning=true -p:NuGetAudit=false \
+              -p:EnableCompressionInSingleFile=true -p:DebugType=Embedded -p:PublishSingleFile=true --self-contained true
+          done
+
+      - name: Package (Linux)
+        if: startsWith(matrix.target, 'linux')
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          mkdir package
+          mv scanner/* main/* package/
+          installer/fetch-deps.sh "$TARGET" package
+          cp installer/linux/install.sh package/
+          echo "$TARGET" > package/PLATFORM
+
+      - uses: actions/upload-artifact@v7
+        if: startsWith(matrix.target, 'linux')
+        with:
+          name: ErsatzTV-Legacy-${{ matrix.target }}
+          path: package/
+          retention-days: 30
+
+      - uses: actions/upload-artifact@v7
+        if: matrix.target == 'win-x64'
+        with:
+          name: dotnet-win-x64
+          path: |
+            scanner/
+            main/
+          retention-days: 1
+
+  windows_installer:
+    name: Build Windows installer
+    runs-on: windows-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: dotnet-win-x64
+          path: dotnet-build
+
+      - name: Package
+        shell: bash
+        run: |
+          mkdir package
+          mv dotnet-build/scanner/* dotnet-build/main/* package/
+          # dotnet copies Resources here anyway
+          rm -rf package/Resources
+          installer/fetch-deps.sh win-x64 package
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress
+          $iscc = Get-ChildItem "${env:ProgramFiles(x86)}", "$env:ProgramFiles" -Filter ISCC.exe -Recurse -Depth 2 -ErrorAction SilentlyContinue |
+            Select-Object -First 1 -ExpandProperty FullName
+          if (-not $iscc) { throw "ISCC.exe not found" }
+          # VISUALXP_patch_v.0.2.3 -> 0.2.3
+          $full = ([xml](Get-Content Directory.Build.props)).Project.PropertyGroup.InformationalVersion | Where-Object { $_ }
+          $version = $full -replace '^.*v\.', ''
+          & $iscc "/DAppVersion=$version" "/DPackageDir=$PWD\package" "/DOutputDir=$PWD\out" installer\windows\ErsatzTV.iss
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed" }
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ErsatzTV-Legacy-win-x64
+          path: out/ErsatzTV-Legacy-Setup-win-x64.exe
+          retention-days: 30
