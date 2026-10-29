@@ -1,7 +1,8 @@
 name: Build
 
 # Builds the Linux (x64, arm64) and Windows (x64) install packages.
-# Every run keeps them as Artifacts. Pushing a tag like v0.2.3 also publishes them as a Release.
+# Every run keeps them as Artifacts. When the version in Directory.Build.props has no Release yet
+# (or a v* tag is pushed), they are also published as a Release.
 # The version shown in the app is InformationalVersion from Directory.Build.props.
 on:
   push:
@@ -94,8 +95,7 @@ jobs:
           rm -rf package/Resources
           installer/fetch-deps.sh win-x64 package
 
-      - name: Portable zip (releases only)
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Portable zip
         shell: bash
         run: |
           mkdir out
@@ -122,21 +122,44 @@ jobs:
 
   release:
     name: Publish release
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.ref == 'refs/heads/visualxp-patch' || startsWith(github.ref, 'refs/tags/v')
     needs: [build, windows_installer]
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
+      - uses: actions/checkout@v7
+
+      # tag push: that tag. Branch push: v + the version in Directory.Build.props (VISUALXP_patch_v.0.2.3 -> v0.2.3)
+      - name: Work out the release
+        id: rel
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            tag="$GITHUB_REF_NAME"
+          else
+            tag="v$(sed -n 's:.*<InformationalVersion>.*v\.\(.*\)</InformationalVersion>.*:\1:p' Directory.Build.props)"
+          fi
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "bad tag '$tag'"; exit 1; }
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "Release $tag already exists; nothing to publish."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
       - uses: actions/download-artifact@v8
+        if: steps.rel.outputs.publish == 'true'
         with:
           pattern: ErsatzTV-Legacy-*
           path: artifacts
 
       - name: Publish
+        if: steps.rel.outputs.publish == 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ steps.rel.outputs.tag }}
         run: |
           mkdir out
           for t in linux-x64 linux-arm64; do
@@ -164,4 +187,4 @@ jobs:
 
           ffmpeg is included. See INSTALL.md for details.
           EOF
-          gh release create "$TAG" out/* --repo "$GITHUB_REPOSITORY" --title "$TAG" --notes-file notes.md --verify-tag
+          gh release create "$TAG" out/* --repo "$GITHUB_REPOSITORY" --title "$TAG" --notes-file notes.md --target "$GITHUB_SHA"
