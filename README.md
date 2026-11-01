@@ -27,7 +27,7 @@ ErsatzTV lets you transform your media library into a personalized, live TV expe
 ## This fork: VISUALXP patch
 
 This is a fork of [ErsatzTV Legacy](https://github.com/ErsatzTV/legacy) with the **VISUALXP patch** on top of upstream
-v26.11.3, built for broadcast use. The current version is **v0.2.5**.
+v26.11.3, built for broadcast use. The current version is **v0.2.6**.
 
 ### Install
 
@@ -57,6 +57,7 @@ packages with ffmpeg included. See [INSTALL.md](INSTALL.md) for step-by-step ins
 
 | Version | Changes |
 |---|---|
+| v0.2.6 | Updated to upstream v26.11.6 with the legacy streaming engine kept; stable ffmpeg 8.1.2-7 and Next v0.2.4 bundled |
 | v0.2.5 | Install packages bundle the stable ffmpeg release (the develop build ran out of memory on Windows) |
 | v0.2.4 | Withdrawn: bundled a Next version too old for this code, channels did not start |
 | v0.2.3 | Packaging only: Windows installer and portable zip, Linux installer, GitHub Releases. No app changes. |

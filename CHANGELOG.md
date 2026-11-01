@@ -3,6 +3,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [VISUALXP_patch_v.0.2.6] - 2026-11-01
+### Changed
+- Updated to upstream ErsatzTV v26.11.6 (d3a65334). The legacy streaming engine is kept: upstream's later commit that removes it is not included.
+- Install packages bundle the stable ffmpeg 8.1.2-7 and Next v0.2.4 that upstream pins.
+
 ## [VISUALXP_patch_v.0.2.5] - 2026-10-30
 ### Fixed
 - Install packages bundle the stable ErsatzTV-ffmpeg 8.1.2-6 instead of a develop build, which failed on Windows with "Cannot allocate memory". Next stays on the develop build this code needs (0.2.4 used Next v0.2.2, which cannot read the channel config this version sends, so channels did not start). No application changes.
@@ -30,12 +35,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - `opacity_expression: "has_tag(\"TAGULVOSTRU\")"`, spre exemplu
 
 ## [Unreleased]
-### Removed
-- Remove the legacy streaming engine; all channels now stream with the next engine
-  - Channels still using the legacy engine are moved to the next engine on startup
-  - `MPEG-TS (Legacy)` channels are moved to `MPEG-TS`, and `HLS Direct` channels are moved to `HLS Segmenter`
-  - Existing `ts-legacy` and `hls-direct` playlist and lineup URLs are redirected to the next engine
-  - Playback troubleshooting can still use the legacy engine for comparison; if a channel works on legacy but not on next, please report it with the ID from `Upload Results`
 
 ## [26.11.6] - 2026-10-31
 ### Added
