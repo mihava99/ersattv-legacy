@@ -51,7 +51,7 @@ public class IptvController : StreamingControllerBase
                     Request.PathBase,
                     mode,
                     Request.Headers.UserAgent,
-                    Request.Query["access_token"]))
+                    QueryAccessToken))
             .Map<ChannelPlaylist, IActionResult>(Ok);
 
     [HttpHead("iptv/xmltv.xml")]
@@ -62,7 +62,7 @@ public class IptvController : StreamingControllerBase
                     Request.Scheme,
                     Request.Host.ToString(),
                     Request.PathBase,
-                    Request.Query["access_token"]))
+                    QueryAccessToken))
             .ToActionResult();
 
     [HttpHead("iptv/hdhr/channel/{channelNumber}.ts")]
@@ -111,7 +111,8 @@ public class IptvController : StreamingControllerBase
         }
 
         // cached lineup and playlist urls can still carry the legacy mode
-        if (mode == "ts-legacy" && maybeChannel.Exists(c => c.StreamingEngine is StreamingEngine.Next))
+        if (mode == "ts-legacy" &&
+            (!LegacyStreamingEngine.Enabled || maybeChannel.Exists(c => c.StreamingEngine is StreamingEngine.Next)))
         {
             _logger.LogInformation(
                 "Channel {ChannelNumber} uses the next streaming engine; using ts instead of mode {Mode}",
@@ -133,7 +134,7 @@ public class IptvController : StreamingControllerBase
             _ => new GetWrappedProcessByChannelNumber(
                 Request.Scheme,
                 Request.Host.ToString(),
-                Request.Query["access_token"],
+                QueryAccessToken,
                 channelNumber)
         };
 
@@ -237,7 +238,7 @@ public class IptvController : StreamingControllerBase
 
         // cached playlist urls can still carry the legacy mode
         if (mode is not ("segmenter" or "segmenter-v2" or "segmenter-fmp4") &&
-            maybeChannel.Exists(c => c.StreamingEngine is StreamingEngine.Next))
+            (!LegacyStreamingEngine.Enabled || maybeChannel.Exists(c => c.StreamingEngine is StreamingEngine.Next)))
         {
             _logger.LogInformation(
                 "Channel {ChannelNumber} uses the next streaming engine; using segmenter instead of mode {Mode}",
@@ -257,7 +258,8 @@ public class IptvController : StreamingControllerBase
                     mode);
                 StreamingEngine streamingEngine =
                     await maybeChannel.Map(c => c.StreamingEngine).IfNoneAsync(StreamingEngine.Legacy);
-                IRequest<Either<BaseError, string>> request = streamingEngine is StreamingEngine.Legacy
+                IRequest<Either<BaseError, string>> request =
+                    LegacyStreamingEngine.Enabled && streamingEngine is StreamingEngine.Legacy
                     ? new StartFFmpegSession(
                         channelNumber,
                         mode,
@@ -310,7 +312,7 @@ public class IptvController : StreamingControllerBase
                             Request.Host.ToString(),
                             channelNumber,
                             mode,
-                            Request.Query["access_token"]),
+                            QueryAccessToken),
                         cancellationToken)
                     .Map(r => r.Match<IActionResult>(
                         playlist => Content(playlist, "application/vnd.apple.mpegurl"),
@@ -335,8 +337,19 @@ public class IptvController : StreamingControllerBase
     [HttpGet("iptv/hls-direct/{channelNumber}.ts")]
     [HttpGet("iptv/hls-direct/{channelNumber}.mkv")]
     [HttpGet("iptv/hls-direct/{channelNumber}.mp4")]
-    public async Task<IActionResult> GetStream(string channelNumber) =>
-        await GetHlsDirectStream(channelNumber);
+    public async Task<IActionResult> GetStream(string channelNumber)
+    {
+        if (!LegacyStreamingEngine.Enabled)
+        {
+            // old hls-direct playlist urls are one long ts segment each
+            string accessToken = string.IsNullOrWhiteSpace(QueryAccessToken)
+                ? string.Empty
+                : $"&access_token={QueryAccessToken}";
+            return Redirect($"~/iptv/channel/{channelNumber}.ts?mode=ts{accessToken}");
+        }
+
+        return await GetHlsDirectStream(channelNumber);
+    }
 
     private async Task<IActionResult> GetHlsDirectStream(string channelNumber)
     {
@@ -357,7 +370,11 @@ public class IptvController : StreamingControllerBase
         return GetProcessResponse(result, channelNumber, StreamingMode.HttpLiveStreamingDirect);
     }
 
-    private string AccessTokenQuery() => string.IsNullOrWhiteSpace(Request.Query["access_token"])
+    // without jwt the token authorizes nothing, so never echo it
+    private string QueryAccessToken =>
+        JwtHelper.IsEnabled ? AccessToken.Sanitize(Request.Query["access_token"]) : null;
+
+    private string AccessTokenQuery() => string.IsNullOrWhiteSpace(QueryAccessToken)
         ? string.Empty
-        : $"?access_token={Request.Query["access_token"]}";
+        : $"?access_token={QueryAccessToken}";
 }
